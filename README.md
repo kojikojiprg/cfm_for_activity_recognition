@@ -9,6 +9,6 @@
 ```
 pip install -U pip
 pip install -r requirements/requirements-run.txt
-pip install -r requirementa/requirements-model.txt --extra-index-url https://download.pytorch.org/whl/cu121
+pip install -r requirements/requirements-model.txt --extra-index-url https://download.pytorch.org/whl/cu121
 pip install -r requirements/requirements-develop.txt
 ```
