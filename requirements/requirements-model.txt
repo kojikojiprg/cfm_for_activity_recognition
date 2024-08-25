@@ -1,0 +1,9 @@
+torch
+torchvision
+lightning
+rotary_embedding_torch
+
+tensorboard
+tensorboardX
+torchsummary
+lap
