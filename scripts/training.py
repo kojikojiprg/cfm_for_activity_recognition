@@ -65,7 +65,6 @@ if __name__ == "__main__":
     # create model
     model = ConditionalFlowMatching(config)
     ddp = DDPStrategy(find_unused_parameters=False, process_group_backend="nccl")
-    accumulate_grad_batches = config.accumulate_grad_batches
 
     logger = TensorBoardLogger("logs/", name="")
     trainer = Trainer(
@@ -75,7 +74,6 @@ if __name__ == "__main__":
         logger=logger,
         callbacks=[model_checkpoint],
         max_epochs=config.epochs,
-        accumulate_grad_batches=accumulate_grad_batches,
         benchmark=True,
     )
     trainer.fit(model, train_dataloaders=dataloader)

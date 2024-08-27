@@ -21,18 +21,17 @@ class ConditionalFlowMatcher:
     def conditional_flow(self, vt_cur, vt_nxt):
         return vt_nxt - vt_cur
 
-    def sample_location_and_conditional_flow(self, v, t=None, tau=None, return_noise=False):
+    def sample_location_and_conditional_flow(self, v, seq_len, t=None, tau=None, return_noise=False):
         # v (seq_len, pt, d)
-        seq_len, pt, d = v.size()
+        _, pt, d = v.size()
         if t is None:
             t = torch.randint(high=seq_len, size=(1,))
         if tau is None:
-            tau = torch.randint(high=self.tau_steps, size=(1,)) / self.tau_steps
-            tau = tau.to(v.device)
+            tau = torch.randint(high=self.tau_steps, size=(1,), device=v.device) / self.tau_steps
 
         vt_cur, vt_nxt = v[t], v[t + 1]
 
-        eps = torch.randn((pt, d)).to(v.device)
+        eps = torch.randn((pt, d), device=v.device)
         vt_tau = self.sample_vt(vt_cur, vt_nxt, tau, eps)
         ut = self.conditional_flow(vt_cur, vt_nxt)  # (pt, d)
 
