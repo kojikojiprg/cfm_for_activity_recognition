@@ -4,27 +4,41 @@ import torch.utils
 
 class ConditionalFlowMatcher:
     def __init__(self, config):
-        self.seq_len = config.seq_len
+        self.tau_steps = config.tau_steps
         self.sigma = config.sigma
 
-    def sample_dxt(self, dx, t, eps):
-        mu_t = dx[:, t - 1]
-        return mu_t + self.sigma * eps
+    def mu_tau(self, vt_cur, vt_nxt, tau):
+        return tau * vt_nxt + (1 - tau) * vt_cur
 
-    def conditional_flow(self, dxt_1, dxt):
-        return dxt - dxt_1
+    def sigma_tau(self, tau):
+        return tau * self.sigma
 
-    def sample_location_and_conditional_flow(self, dx, t=None, return_noise=False):
-        # dx (b, seq_len - 1, 17, 2)
-        b = dx.size(0)
+    def sample_vt(self, vt_cur, vt_nxt, tau, eps):
+        mu_tau = self.mu_tau(vt_cur, vt_nxt, tau)
+        sigma_tau = self.sigma_tau(tau)
+        return mu_tau + sigma_tau * eps
+
+    def conditional_flow(self, vt_cur, vt_nxt):
+        return vt_nxt - vt_cur
+
+    def sample_location_and_conditional_flow(self, v, t=None, tau=None, return_noise=False):
+        # v (seq_len, pt, d)
+        seq_len, pt, d = v.size()
         if t is None:
-            t = torch.randint(1, self.seq_len, b).to(torch.float32)
+            t = torch.randint(high=seq_len, size=(1,))
+        if tau is None:
+            tau = torch.randint(high=self.tau_steps, size=(1,)) / self.tau_steps
+            tau = tau.to(v.device)
 
-        eps = torch.randn((b, 17, 2))
-        dxt = self.sample_dxt(dx, t, eps)  # (b, 17, 2)
-        ut = self.conditional_flow(dx[:, t - 1], dx[:, t])  # (b, 17, 2)
+        vt_cur, vt_nxt = v[t], v[t + 1]
 
+        eps = torch.randn((pt, d)).to(v.device)
+        vt_tau = self.sample_vt(vt_cur, vt_nxt, tau, eps)
+        ut = self.conditional_flow(vt_cur, vt_nxt)  # (pt, d)
+
+        vt_tau = vt_tau.to(torch.float32)
+        ut = ut.to(torch.float32)
         if return_noise:
-            return t, dxt, ut, eps
+            return tau, vt_tau, ut, eps
         else:
-            return t, dxt, ut
+            return tau, vt_tau, ut

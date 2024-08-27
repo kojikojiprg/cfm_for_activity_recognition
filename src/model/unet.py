@@ -96,9 +96,10 @@ class Up(nn.Module):
 
 
 class UNet(nn.Module):
-    def __init__(self, config, size=34, num_classes=None):
+    def __init__(self, config, size, num_classes=None):
         super().__init__()
         self.hidden_ndim = config.hidden_ndim
+        size = size[0] * size[1]
 
         self.inc = Conv(1, 64)
         self.down1 = Down(64, 128)
@@ -129,30 +130,32 @@ class UNet(nn.Module):
         pos_enc = torch.cat([pos_enc_a, pos_enc_b], dim=-1)
         return pos_enc
 
-    def forward(self, x, t, y=None):
-        b, ch, pt, d = x.size()
-        x = x.view(b, ch, pt * d)
+    def forward(self, tau, v, y=None):
+        b, pt, d = v.size()
+        v = v.view(b, 1, pt * d)
 
-        t = t.unsqueeze(-1).type(torch.float)
-        t = self.pos_encoding(t, self.hidden_ndim)
+        tau = tau.unsqueeze(-1).type(torch.float)
+        tau = self.pos_encoding(tau, self.hidden_ndim)
 
         if y is not None:
-            t += self.label_emb(y)
+            tau += self.label_emb(y)
 
-        x1 = self.inc(x)
-        x2 = self.down1(x1, t)
+        x1 = self.inc(v)
+
+        x2 = self.down1(x1, tau)
         x2 = self.sa1(x2)
-        x3 = self.down2(x2, t)
+        x3 = self.down2(x2, tau)
         x3 = self.sa2(x3)
 
         x3 = self.bot1(x3)
         x3 = self.bot2(x3)
         x3 = self.bot3(x3)
 
-        x = self.up1(x3, x2, t)
-        x = self.sa3(x)
-        x = self.up2(x, x1, t)
-        x = self.sa4(x)
-        output = self.outc(x)
-        output = output.view(b, ch, pt, d)
+        v = self.up1(x3, x2, tau)
+        v = self.sa3(v)
+        v = self.up2(v, x1, tau)
+        v = self.sa4(v)
+
+        output = self.outc(v)
+        output = output.view(b, pt, d)
         return output
