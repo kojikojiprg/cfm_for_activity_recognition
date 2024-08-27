@@ -40,7 +40,7 @@ class ConditionalFlowMatching(LightningModule):
             seq_lens = []
             for i in range(b):
                 mask = torch.where(torch.all(~torch.isnan(v[i]), dim=(1, 2)))[0]
-                seq_lens.append(len(mask))
+                seq_lens.append(len(mask) - 1)
 
             # sample from cfm
             tau = torch.empty((0,)).to(self.device)
