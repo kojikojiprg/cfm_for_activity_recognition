@@ -1,0 +1,13 @@
+# model
+hidden_ndim: 256
+tau_steps: 10
+sigma: 0.5
+
+# optim
+lr: 0.0001
+
+# training
+epochs: 100
+batch_size: 128
+# accumulate_grad_batches: 1
+num_workers: 1
