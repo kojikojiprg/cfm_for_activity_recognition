@@ -102,18 +102,18 @@ class UNet(nn.Module):
         size = size[0] * size[1]
 
         self.inc = Conv(1, 64)
-        self.down1 = Down(64, 128)
+        self.down1 = Down(64, 128, config.hidden_ndim)
         self.sa1 = SelfAttention(128)
-        self.down2 = Down(128, 256)
+        self.down2 = Down(128, 256, config.hidden_ndim)
         self.sa2 = SelfAttention(256)
 
         self.bot1 = Conv(256, 512)
         self.bot2 = Conv(512, 512)
         self.bot3 = Conv(512, 256)
 
-        self.up1 = Up(256 + 128, 128, size // 2)
+        self.up1 = Up(256 + 128, 128, size // 2, config.hidden_ndim)
         self.sa3 = SelfAttention(128)
-        self.up2 = Up(128 + 64, 64, size)
+        self.up2 = Up(128 + 64, 64, size, config.hidden_ndim)
         self.sa4 = SelfAttention(64)
         self.outc = nn.Conv1d(64, 1, kernel_size=1)
 
