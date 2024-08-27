@@ -131,10 +131,20 @@ class NTU_RGBD(torch.utils.data.Dataset):
         return skel_seq, label
 
     def create_test(self):
-        raise NotImplementedError
+        data_dicts = self.load()
 
-    def get_pred(self, idx):
-        raise NotImplementedError
+        for data_dict in tqdm(data_dicts, ncols=100, desc="creating"):
+            self.labels.append(data_dict["label"])
+            for key, val in data_dict.items():
+                if "skel" in key:
+                    val = self.pad_skeleton_seq(val)
+                    self.skeleton_seqs.append(val)
+
+    def get_test(self, idx):
+        label = self.labels[idx]
+        skel_seq = self.skeleton_seqs[idx]
+
+        return skel_seq, label
 
     def __len__(self):
         return len(self.labels)
@@ -143,7 +153,7 @@ class NTU_RGBD(torch.utils.data.Dataset):
         if self.stage == "train":
             return self.get_train(idx)
         elif self.stage == "test":
-            return self.get_pred(idx)
+            return self.get_test(idx)
 
 
 def _read_skeleton(file_path, save_skelxyz=True, save_rgbxy=True, save_depthxy=True):
