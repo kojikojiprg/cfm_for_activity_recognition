@@ -1,5 +1,6 @@
 import argparse
 import os
+import shutil
 import sys
 from glob import glob
 
@@ -27,7 +28,7 @@ if __name__ == "__main__":
     config_path = "configs/model.yaml"
     config = yaml_handler.load(config_path)
 
-    # model checkpoint callback
+    # create checkpoint directory of this version
     checkpoint_dir = "models/"
     ckpt_dirs = glob(os.path.join(checkpoint_dir, "*/"))
     ckpt_dirs = [d for d in ckpt_dirs if "version_" in d]
@@ -42,6 +43,13 @@ if __name__ == "__main__":
     else:
         v_num = 0
     checkpoint_dir = os.path.join(checkpoint_dir, f"version_{v_num}")
+    os.makedirs(checkpoint_dir, exist_ok=False)
+
+    # copy config
+    copy_config_path = os.path.join(checkpoint_dir, "model.yaml")
+    shutil.copyfile(config_path, copy_config_path)
+
+    # model checkpoint callback
     filename = f"cfm_steps{config.tau_steps}-sig{config.sigma}"
     model_checkpoint = ModelCheckpoint(
         checkpoint_dir,

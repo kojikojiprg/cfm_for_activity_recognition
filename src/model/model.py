@@ -106,6 +106,12 @@ class ConditionalFlowMatching(LightningModule):
                 at = torch.cat(at_lst).view(seq_lens[i], self.tau_steps, pt, d)
                 vt = torch.cat(vt_lst).view(seq_lens[i], self.tau_steps, pt, d)
                 xt = torch.cat(xt_lst).view(seq_lens[i], self.tau_steps, pt, d)
+
+                x = x / self.tau_steps
+                v = v / self.tau_steps
+                xt = xt / self.tau_steps
+                vt = vt / self.tau_steps
+                at = at / self.tau_steps
                 results.append(
                     {
                         "x_true": x[i, : seq_lens[i] + 1].detach().cpu().numpy(),
