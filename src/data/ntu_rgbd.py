@@ -96,10 +96,23 @@ class NTU_RGBD(torch.utils.data.Dataset):
             elif self.stage == "test" and self.is_train(subject_id):
                 continue
 
+            label = int(file_name[-3:])
+            if label != 27:  # jump up
+                continue
+
             data_dict = _read_skeleton(path)
             data_dicts.append(data_dict)
 
         return data_dicts
+
+    @staticmethod
+    def pad_skeleton_seq(skel_seq, length=500):
+        return np.pad(
+            skel_seq,
+            ((0, length - len(skel_seq)), (0, 0), (0, 0)),
+            "constant",
+            constant_values=np.nan,
+        )
 
     def create_train(self):
         data_dicts = self.load()
@@ -108,6 +121,7 @@ class NTU_RGBD(torch.utils.data.Dataset):
             self.labels.append(data_dict["label"])
             for key, val in data_dict.items():
                 if "skel" in key:
+                    val = self.pad_skeleton_seq(val)
                     self.skeleton_seqs.append(val)
 
     def get_train(self, idx):
