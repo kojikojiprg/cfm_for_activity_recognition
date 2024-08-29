@@ -2,7 +2,7 @@ import torch
 import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 
-from .cfm import ConditionalFlowMatcher
+from .cfm import ConsistencyFlowMatcher
 from .nn import TransformerEncoder
 
 
@@ -17,7 +17,7 @@ class ConditionalFlowMatching(LightningModule):
 
     def configure_model(self):
         if self.cfm is None:
-            self.cfm = ConditionalFlowMatcher(self.config)
+            self.cfm = ConsistencyFlowMatcher(self.config)
         if self.net is None:
             self.net = TransformerEncoder(self.config, self.skel_size)
 
@@ -34,12 +34,12 @@ class ConditionalFlowMatching(LightningModule):
         return v
 
     @staticmethod
-    def calc_seq_lens(v):
+    def calc_seq_lens(x):
         # calc seq_len of each sample
         seq_lens = []
-        for i in range(v.size(0)):
-            mask = torch.where(torch.all(~torch.isnan(v[i]), dim=(1, 2)))[0]
-            seq_lens.append(len(mask) - 1)
+        for i in range(x.size(0)):
+            mask = torch.where(torch.all(~torch.isnan(x[i]), dim=(1, 2)))[0]
+            seq_lens.append(len(mask))
         return seq_lens
 
     def training_step(self, batch, batch_idx):
@@ -47,26 +47,29 @@ class ConditionalFlowMatching(LightningModule):
         b, _, pt, d = x.size()
 
         with torch.no_grad():
-            v = self.calc_verocity(x)
-            seq_lens = self.calc_seq_lens(v)
+            # v = self.calc_verocity(x)
+            seq_lens = self.calc_seq_lens(x)
 
             # sample from cfm
-            tau = torch.empty((0,)).to(self.device)
-            vt_tau = torch.empty((0, pt, d)).to(self.device)
-            ut = torch.empty((0, pt, d)).to(self.device)
+            dt = torch.empty((0,)).to(self.device)
+            xt_dt = torch.empty((0, pt, d)).to(self.device)
             for i in range(b):
-                v_one = v[i]
-                tau_one, vt_tau_one, ut_one = (
-                    self.cfm.sample_location_and_conditional_flow(v_one, seq_lens[i])
-                )
-                tau = torch.cat([tau, tau_one])
-                vt_tau = torch.cat([vt_tau, vt_tau_one], dim=0)
-                ut = torch.cat([ut, ut_one], dim=0)
+                x_one = x[i]
+                dt1, dt2, xt_dt1, xt_dt2 = self.cfm.sample_location(x_one, seq_lens[i])
+                dt = torch.cat([dt, dt1, dt2])
+                xt_dt = torch.cat([xt_dt, xt_dt1, xt_dt2], dim=0)
 
-        tau = tau * self.tau_steps  # [0, 1] -> [0, tau_steps]
-        at = self.net(tau, vt_tau)
+        # calc vt
+        dt_int = dt * self.tau_steps  # [0, 1] -> [0, tau_steps]
+        vt = self.net(dt_int, xt_dt).view(b, 2, pt, d)
 
-        loss = F.mse_loss(at, ut)
+        # calc reconstructed xt
+        dt = dt.view(b, 2, 1, 1).repeat(1, 1, pt, d)
+        xt_dt = xt_dt.view(b, 2, pt, d)
+        xt1 = xt_dt[:, 0] + (1 - dt[:, 0]) * vt[:, 0]
+        xt2 = xt_dt[:, 1] + (1 - dt[:, 1]) * vt[:, 1]
+
+        loss = F.mse_loss(xt1, xt2) + F.mse_loss(vt[:, 0], vt[:, 1])
         self.log("loss", loss, prog_bar=True, logger=True)
         return loss
 
@@ -77,45 +80,41 @@ class ConditionalFlowMatching(LightningModule):
 
         with torch.no_grad():
             v = self.calc_verocity(x)
-            seq_lens = self.calc_seq_lens(v)
+            seq_lens = self.calc_seq_lens(x)
 
             # sample from cfm
             results = []
             for i in range(b):
-                xt = x[i, 1]
-                vt = v[i, 0]
-                at_lst = []
+                xt = x[i, 1].view(1, pt, d)
+                vt = v[i, 0].view(1, pt, d)
+                # vt = v[i, 0]
                 vt_lst = []
                 xt_lst = []
                 for t in range(seq_lens[i]):
-                    for tau in range(self.tau_steps):
-                        tau = torch.tensor(tau).to(self.device)
-
-                        # update at
-                        at = self.net(tau, vt.view(1, pt, d))
-                        at_lst.append(at)
+                    for dt in range(self.tau_steps):
+                        dt = torch.tensor(dt).to(self.device)
 
                         # update vt
-                        vt = vt + at / self.tau_steps
+                        vt = self.net(dt, xt)
                         vt_lst.append(vt)
 
                         # update xt
                         xt = xt + vt / self.tau_steps
                         xt_lst.append(xt)
 
-                at = torch.cat(at_lst).view(seq_lens[i], self.tau_steps, pt, d)
+                # at = torch.cat(at_lst).view(seq_lens[i], self.tau_steps, pt, d)
                 vt = torch.cat(vt_lst).view(seq_lens[i], self.tau_steps, pt, d)
                 xt = torch.cat(xt_lst).view(seq_lens[i], self.tau_steps, pt, d)
 
-                xb = x[i, 1 : seq_lens[i] + 1]
-                vb = v[i, : seq_lens[i]]
+                xb = x[i, 1 : seq_lens[i]]
+                vb = v[i, : seq_lens[i] - 1]
                 results.append(
                     {
                         "x_true": xb.detach().cpu().numpy(),
                         "v_true": vb.detach().cpu().numpy(),
                         "x_pred": xt.detach().cpu().numpy(),
                         "v_pred": vt.detach().cpu().numpy(),
-                        "a_pred": at.detach().cpu().numpy(),
+                        # "a_pred": at.detach().cpu().numpy(),
                     }
                 )
 
