@@ -30,16 +30,16 @@ class TransformerEncoder(nn.Module):
         pos_enc = torch.cat([pos_enc_a, pos_enc_b], dim=-1)
         return pos_enc
 
-    def forward(self, tau, x):
+    def forward(self, t, x):
         # x (b, pt, b)
         b, pt, d = x.size()
         x = x.view(b, pt * d, 1)
 
         x = self.emb_in(x)
-        tau = tau.unsqueeze(-1).type(torch.float)
-        tau = self.pos_encoding_tau(tau, self.hidden_ndim)
-        tau = tau.view(b, 1, self.hidden_ndim).repeat(1, pt * d, 1)
-        x = x + tau
+        t = t.repeat(b, 1).type(torch.float32)
+        t = self.pos_encoding_tau(t, self.hidden_ndim)
+        t = t.view(b, 1, self.hidden_ndim).repeat(1, pt * d, 1)
+        x = x + t
 
         x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
 

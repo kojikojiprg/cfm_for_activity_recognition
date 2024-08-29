@@ -1,6 +1,7 @@
+seq_len: 60
+sigma: 0.01
+
 # model
-tau_steps: 20
-sigma: 0.5
 hidden_ndim: 1024
 nlayers: 6
 nheads: 16

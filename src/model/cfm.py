@@ -4,31 +4,25 @@ import torch.utils
 
 class ConsistencyFlowMatcher:
     def __init__(self, config):
-        self.tau_steps = config.tau_steps
+        self.seq_len = config.seq_len
+        self.sigma = config.sigma
 
-    def sample_xt_dt(self, xt_cur, xt_nxt, dt):
-        xt_dt = dt * xt_nxt + (1 - dt) * xt_cur
+    def sample_vt(self, vt_cur, vt_nxt, dt):
+        xt_dt = dt * vt_nxt + (1 - dt) * vt_cur
         return xt_dt.to(torch.float32)
 
-    def sample_location(self, x, seq_len):
-        # x (seq_len, pt, d)
-        t = torch.randint(high=seq_len - 1, size=(1,))
+    @torch.no_grad()
+    def sample_location(self, v):
+        # v (b, seq_len - 1, pt, d)
+        b, _, pt, d = v.size()
 
-        if self.tau_steps > 1:
-            dt1 = (
-                torch.randint(high=self.tau_steps - 1, size=(1,), device=x.device)
-                / self.tau_steps
-            )
-            dt2 = torch.clamp(
-                dt1 + torch.rand(size=(1,), device=x.device),
-                max=(1 - 1 / self.tau_steps),
-            )
-        else:
-            dt1 = torch.zeros((1,), device=x.device)
-            dt2 = dt1 + torch.rand(size=(1,), device=x.device)
+        # sample t and dt
+        t = torch.randint(high=self.seq_len - 2, size=(1,), device=v.device)
+        dt = torch.clamp(torch.rand(size=(1,), device=v.device), max=1 - self.sigma)
 
-        xt_cur, xt_nxt = x[t], x[t + 1]
-        xt_dt1 = self.sample_xt_dt(xt_cur, xt_nxt, dt1)
-        xt_dt2 = self.sample_xt_dt(xt_cur, xt_nxt, dt2)
+        # sample vt
+        vt_cur, vt_nxt = v[:, t], v[:, t + 1]
+        vt1 = self.sample_vt(vt_cur, vt_nxt, 0)
+        vt2 = self.sample_vt(vt_cur, vt_nxt, dt)
 
-        return dt1, dt2, xt_dt1, xt_dt2
+        return t, t + dt, vt1.view(b, pt, d), vt2.view(b, pt, d)
