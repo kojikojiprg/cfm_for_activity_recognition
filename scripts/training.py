@@ -43,7 +43,12 @@ if __name__ == "__main__":
     else:
         v_num = 0
     checkpoint_dir = os.path.join(checkpoint_dir, f"version_{v_num}")
-    os.makedirs(checkpoint_dir, exist_ok=False)
+
+    if "WORLD_SIZE" not in os.environ:
+        # copy config
+        os.makedirs(checkpoint_dir, exist_ok=False)
+        copy_config_path = os.path.join(checkpoint_dir, "model.yaml")
+        shutil.copyfile(config_path, copy_config_path)
 
     # copy config
     copy_config_path = os.path.join(checkpoint_dir, "model.yaml")
