@@ -11,7 +11,7 @@ class ConditionalFlowMatcher:
         return tau * vt_nxt + (1 - tau) * vt_cur
 
     def sigma_tau(self, tau):
-        return tau * self.sigma
+        return self.sigma
 
     def sample_vt(self, vt_cur, vt_nxt, tau, eps):
         mu_tau = self.mu_tau(vt_cur, vt_nxt, tau)
@@ -19,7 +19,7 @@ class ConditionalFlowMatcher:
         return mu_tau + sigma_tau * eps
 
     def conditional_flow(self, vt_cur, vt_nxt):
-        return (vt_nxt - vt_cur) / self.tau_steps
+        return vt_nxt - vt_cur
 
     def sample_location_and_conditional_flow(self, v, seq_len=None, t=None, tau=None, return_noise=False):
         # v (seq_len, pt, d)
@@ -30,7 +30,7 @@ class ConditionalFlowMatcher:
             if self.tau_steps > 1:
                 tau = torch.randint(high=self.tau_steps, size=(1,), device=v.device) / self.tau_steps
             else:
-                tau = torch.zeros((1,))
+                tau = torch.zeros((1,), device=v.device)
 
         vt_cur, vt_nxt = v[t], v[t + 1]
 

@@ -3,7 +3,7 @@ import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 
 from .cfm import ConditionalFlowMatcher
-from .unet import UNet
+from .nn import TransformerEncoder
 
 
 class ConditionalFlowMatching(LightningModule):
@@ -13,16 +13,16 @@ class ConditionalFlowMatching(LightningModule):
         self.tau_steps = self.config.tau_steps
         self.skel_size = skel_size
         self.cfm = None
-        self.unet = None
+        self.net = None
 
     def configure_model(self):
         if self.cfm is None:
             self.cfm = ConditionalFlowMatcher(self.config)
-        if self.unet is None:
-            self.unet = UNet(self.config, self.skel_size)
+        if self.net is None:
+            self.net = TransformerEncoder(self.config, self.skel_size)
 
     def configure_optimizers(self):
-        opt = torch.optim.Adam(self.unet.parameters(), self.config.lr)
+        opt = torch.optim.Adam(self.net.parameters(), self.config.lr)
         sch = torch.optim.lr_scheduler.CosineAnnealingLR(
             opt, self.config.t_max, self.config.lr_min
         )
@@ -45,7 +45,6 @@ class ConditionalFlowMatching(LightningModule):
     def training_step(self, batch, batch_idx):
         x, label = batch
         b, _, pt, d = x.size()
-        x = x * self.tau_steps
 
         with torch.no_grad():
             v = self.calc_verocity(x)
@@ -65,7 +64,7 @@ class ConditionalFlowMatching(LightningModule):
                 ut = torch.cat([ut, ut_one], dim=0)
 
         tau = tau * self.tau_steps  # [0, 1] -> [0, tau_steps]
-        at = self.unet(tau, vt_tau)
+        at = self.net(tau, vt_tau)
 
         loss = F.mse_loss(at, ut)
         self.log("loss", loss, prog_bar=True, logger=True)
@@ -74,7 +73,6 @@ class ConditionalFlowMatching(LightningModule):
     def predict_step(self, batch, batch_idx):
         x, label = batch
         b, _, pt, d = x.size()
-        x = x * self.tau_steps
         x = x.to(torch.float32)
 
         with torch.no_grad():
@@ -92,32 +90,31 @@ class ConditionalFlowMatching(LightningModule):
                 for t in range(seq_lens[i]):
                     for tau in range(self.tau_steps):
                         tau = torch.tensor(tau).to(self.device)
-                        at = self.unet(tau, vt.view(1, pt, d))
+
+                        # update at
+                        at = self.net(tau, vt.view(1, pt, d))
                         at_lst.append(at)
 
                         # update vt
-                        vt = vt + (at / self.tau_steps)
+                        vt = vt + at / self.tau_steps
                         vt_lst.append(vt)
 
                         # update xt
-                        xt = xt - (vt / self.tau_steps)
+                        xt = xt + vt / self.tau_steps
                         xt_lst.append(xt)
 
                 at = torch.cat(at_lst).view(seq_lens[i], self.tau_steps, pt, d)
                 vt = torch.cat(vt_lst).view(seq_lens[i], self.tau_steps, pt, d)
                 xt = torch.cat(xt_lst).view(seq_lens[i], self.tau_steps, pt, d)
 
-                x = x / self.tau_steps
-                v = v / self.tau_steps
-                xt = xt / self.tau_steps
-                vt = vt / self.tau_steps
-                at = at / self.tau_steps
+                xb = x[i, 1 : seq_lens[i] + 1]
+                vb = v[i, : seq_lens[i]]
                 results.append(
                     {
-                        "x_true": x[i, : seq_lens[i] + 1].detach().cpu().numpy(),
-                        "v_true": v[i, : seq_lens[i]].detach().cpu().numpy(),
+                        "x_true": xb.detach().cpu().numpy(),
+                        "v_true": vb.detach().cpu().numpy(),
                         "x_pred": xt.detach().cpu().numpy(),
-                        "v_pred": vt[: seq_lens[i]].detach().cpu().numpy(),
+                        "v_pred": vt.detach().cpu().numpy(),
                         "a_pred": at.detach().cpu().numpy(),
                     }
                 )
