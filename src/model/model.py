@@ -2,7 +2,6 @@ import torch
 import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 
-from .cfm import ConditionalFlowMatcher
 from .nn import TransformerEncoder
 
 
@@ -11,14 +10,11 @@ class ConditionalFlowMatching(LightningModule):
         super().__init__()
         self.config = config
         self.seq_len = config.seq_len
-        self.steps = config.steps
+        self.sigma = config.sigma
         self.skel_size = skel_size
-        self.cfm = None
         self.net = None
 
     def configure_model(self):
-        if self.cfm is None:
-            self.cfm = ConditionalFlowMatcher(self.config)
         if self.net is None:
             self.net = TransformerEncoder(self.config, self.skel_size)
 
@@ -39,17 +35,19 @@ class ConditionalFlowMatching(LightningModule):
 
         v0 = self.calc_verocity(x0)
         v1 = self.calc_verocity(x1)
-        dt, vt, ut = self.cfm.sample_location(v0, v1)
+
+        vt = v0 + self.sigma * torch.randn_like(v0)
+        ut = v1 - v0
 
         # calc at
-        at = self.net(dt, vt)
+        at = self.net(vt)
 
         # calc at0_sum
         at_sum = at.sum(dim=1)
         at_true = v1[:, -1] - v1[:, 0]
 
         # calc reconstructed vt
-        recon_vt = vt + (1 - dt) * at
+        recon_vt = vt + at
 
         # calc reconstructed x
         recon_xt = x0[:, 1:] + recon_vt
@@ -83,36 +81,35 @@ class ConditionalFlowMatching(LightningModule):
 
                 # get init vals
                 xi_seq_len, pt, d = xi.size()
-                # xit = xi[1 : self.seq_len].view(1, self.seq_len - 1, pt, d)
-                # vit = vi[: self.seq_len - 1].view(1, self.seq_len - 1, pt, d)
+                xit = xi[1 : self.seq_len].view(1, self.seq_len - 1, pt, d)
+                vit = vi[: self.seq_len - 1].view(1, self.seq_len - 1, pt, d)
 
                 ai_preds = []
                 vi_preds = []
                 xi_preds = []
-                pred_len = xi_seq_len - self.seq_len - 1
+                pred_len = xi_seq_len - self.seq_len
                 for t in range(pred_len):
-                    xit = xi[t + 1 : t + self.seq_len].view(1, self.seq_len - 1, pt, d)
-                    vit = vi[t : t + self.seq_len - 1].view(1, self.seq_len - 1, pt, d)
-                    dt = torch.zeros_like(vit)
+                    # xit = xi[t + 1 : t + self.seq_len].view(1, self.seq_len - 1, pt, d)
+                    # vit = vi[t : t + self.seq_len - 1].view(1, self.seq_len - 1, pt, d)
 
-                    for s in range(self.steps):
-                        dt = dt + 1 / self.steps
+                    # pred ait
+                    ait = self.net(vit)
+                    ai_preds.append(ait)
 
-                        # pred ait
-                        ait = self.net(dt, vit)
-                        ai_preds.append(ait)
+                    # update vt
+                    vit = vit + ait
+                    vi_preds.append(vit)
 
-                        # update vt
-                        vit = vit + (ait / self.steps)
-                        vi_preds.append(vit)
+                    v_loss = F.mse_loss(vit, vi[t + 1 : t + self.seq_len].view(1, self.seq_len - 1, pt, d))
+                    print(v_loss)
 
-                        # update xt
-                        xit = xit + (vit / self.steps)
-                        xi_preds.append(xit)
+                    # update xt
+                    xit = xit + vit
+                    xi_preds.append(xit)
 
-                ai_preds = torch.cat(ai_preds).view(pred_len, self.steps, self.seq_len - 1, pt, d)
-                vi_preds = torch.cat(vi_preds).view(pred_len, self.steps, self.seq_len - 1, pt, d)
-                xi_preds = torch.cat(xi_preds).view(pred_len, self.steps, self.seq_len - 1, pt, d)
+                ai_preds = torch.cat(ai_preds).view(pred_len, self.seq_len - 1, pt, d)
+                vi_preds = torch.cat(vi_preds).view(pred_len, self.seq_len - 1, pt, d)
+                xi_preds = torch.cat(xi_preds).view(pred_len, self.seq_len - 1, pt, d)
                 results.append(
                     {
                         "x_true": xi.detach().cpu().numpy(),
@@ -120,6 +117,7 @@ class ConditionalFlowMatching(LightningModule):
                         "x_pred": xi_preds.detach().cpu().numpy(),
                         "v_pred": vi_preds.detach().cpu().numpy(),
                         "a_pred": ai_preds.detach().cpu().numpy(),
+                        "v_loss": v_loss.detach().cpu().numpy(),
                     }
                 )
 
