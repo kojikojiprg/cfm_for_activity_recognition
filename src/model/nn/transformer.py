@@ -8,7 +8,7 @@ class TransformerEncoder(nn.Module):
     def __init__(self, config, size):
         super().__init__()
         self.hidden_ndim = config.hidden_ndim
-        self.emb_in = nn.Linear(1, config.hidden_ndim)
+        self.emb_in = nn.Linear(config.seq_len - 1, config.hidden_ndim)
         self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=True)
         self.encoders = nn.ModuleList(
             [
@@ -18,28 +18,37 @@ class TransformerEncoder(nn.Module):
                 for _ in range(config.nlayers)
             ]
         )
-        self.emb_out = nn.Linear(config.hidden_ndim, 1)
+        self.emb_out = nn.Linear(config.hidden_ndim, config.seq_len - 1)
 
-    def pos_encoding_tau(self, t, channels):
+    def pos_encoding_t(self, t):
+        b, seq_len, pt, d = t.size()
+        t = t.view(b, seq_len, pt * d)
+        ch = pt * d
+
         inv_freq = 1.0 / (
-            10000
-            ** (torch.arange(0, channels, 2, device=t.device).float() / channels)
+            10000 ** (torch.arange(0, ch, 2, device=t.device) / ch)
         )
-        pos_enc_a = torch.sin(t.repeat(1, channels // 2) * inv_freq)
-        pos_enc_b = torch.cos(t.repeat(1, channels // 2) * inv_freq)
-        pos_enc = torch.cat([pos_enc_a, pos_enc_b], dim=-1)
+        pos_enc_sin = torch.sin(t[:, :, 0::2] * inv_freq)
+        if ch % 2 == 1:
+            inv_freq = inv_freq[:-1]
+        pos_enc_cos = torch.cos(t[:, :, 1::2] * inv_freq)
+
+        pos_enc = torch.cat([pos_enc_sin, pos_enc_cos], dim=-1)
+        pos_enc = pos_enc.view(b, seq_len, pt, d).float()
         return pos_enc
 
-    def forward(self, t, x):
-        # x (b, pt, b)
-        b, pt, d = x.size()
-        x = x.view(b, pt * d, 1)
+    def forward(self, dt, x):
+        # x (b, seq_len, pt, b)
+        b, seq_len, pt, d = x.size()
 
-        x = self.emb_in(x)
-        t = t.repeat(b, 1).type(torch.float32)
-        t = self.pos_encoding_tau(t, self.hidden_ndim)
-        t = t.view(b, 1, self.hidden_ndim).repeat(1, pt * d, 1)
+        t = torch.arange(0, x.size(1), device=dt.device)
+        t = t.view(1, seq_len, 1, 1).repeat(b, 1, pt, d) + dt
+        t = self.pos_encoding_t(t)
         x = x + t
+
+        x = x.view(b, seq_len, pt * d)
+        x = x.permute(0, 2, 1)  # (b, pt*d, seq_len)
+        x = self.emb_in(x)
 
         x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
 
@@ -47,7 +56,8 @@ class TransformerEncoder(nn.Module):
             x, attn_w = layer(x)
 
         x = self.emb_out(x)
-        x = x.view(b, pt, d)
+        x = x.permute(0, 2, 1)  # (b, seq_len, pt*d)
+        x = x.view(b, seq_len, pt, d)
         return x
 
 
@@ -66,7 +76,7 @@ class TransformerEncoderBlock(nn.Module):
         self.norm2 = nn.GroupNorm(1, size)
 
     def forward(self, x, need_weights=False):
-        # x (b, pt * d, hidden_ndim)
+        # x (b, seq_len, pt * d, hidden_ndim)
         x_attn, attn_w = self.attention_block(x, need_weights)
         x = self.norm1(x + x_attn)
         x = self.norm2(x + self.feed_forward_block(x))

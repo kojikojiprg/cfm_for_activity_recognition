@@ -34,66 +34,82 @@ class ConditionalFlowMatching(LightningModule):
         return v
 
     def training_step(self, batch, batch_idx):
-        x, label = batch
-        b, seq_len, pt, d = x.size()
+        x0, x1, label = batch
+        b, seq_len, pt, d = x0.size()
 
-        v = self.calc_verocity(x)
-        t1, t2, vt1, vt2 = self.cfm.sample_location(v)
+        v0 = self.calc_verocity(x0)
+        v1 = self.calc_verocity(x1)
+        dt, vt0, vt1 = self.cfm.sample_location(v0, v1)
 
-        # calc vt
-        at1 = self.net(t1, vt1)
-        at2 = self.net(t2, vt2)
+        # calc at
+        at0 = self.net(torch.zeros_like(v0), vt0)
+        at1 = self.net(dt, vt1)
 
-        # calc reconstructed xt
-        vt1 = vt1 + at1
-        vt2 = vt2 + (1 - (t2 - t1)) * at2
+        # calc reconstructed vt
+        vt0 = vt0 + at0
+        vt1 = vt1 + (1 - dt) * at1
 
-        loss = F.mse_loss(vt1, vt2) + F.mse_loss(at1, at2)
-        self.log("loss", loss, prog_bar=True, logger=True)
+        # calc reconstructed x
+        recon_x1 = x0[:, 1:] + vt0
+        recon_x1dt = x0[:, 1:] + vt1
+
+        loss_x = F.mse_loss(recon_x1, recon_x1dt)
+        loss_v = F.mse_loss(vt0, vt1)
+        loss_a = F.mse_loss(at0, at1)
+
+        loss = loss_x + loss_v + loss_a
+        loss_dict = dict(x=loss_x, v=loss_v, a=loss_a, loss=loss)
+        self.log_dict(loss_dict, prog_bar=True, logger=True)
         return loss
 
     def predict_step(self, batch, batch_idx):
         x, label = batch
-        b, _, pt, d = x.size()
-        x = x.to(torch.float32)
 
         with torch.no_grad():
             v = self.calc_verocity(x)
 
             # sample from cfm
             results = []
-            for i in range(b):
-                xt = x[i, 1].view(1, pt, d)
-                vt = v[i, 0].view(1, pt, d)
-                at_lst = []
-                vt_lst = []
-                xt_lst = []
-                for t in range(self.seq_len):
-                    # update vt
-                    at = self.net(t, vt)
-                    at_lst.append(at)
+            for i in range(x.size(0)):
+                # remove padding
+                mask = ~torch.all(torch.isnan(x[i]), dim=(1, 2))
+                xi = x[i][mask]
+                vi = v[i][mask[1:]]
+
+                # get init vals
+                xi_seq_len, pt, d = xi.size()
+                xit = xi[1 : self.seq_len].view(self.seq_len - 1, pt, d)
+                vit = vi[: self.seq_len - 1].view(self.seq_len - 1, pt, d)
+
+                ai_preds = []
+                vi_preds = []
+                xi_preds = []
+                pred_len = xi_seq_len - self.seq_len - 1
+                for t in range(pred_len):
+                    dt = torch.zeros_like(vit)
+
+                    # pred ait
+                    ait = self.net(dt, vit.view(1, self.seq_len - 1, pt, d))
+                    ai_preds.append(ait)
 
                     # update vt
-                    vt = vt + at
-                    vt_lst.append(vt)
+                    vit = vit + ait
+                    vi_preds.append(vit)
 
                     # update xt
-                    xt = xt + vt
-                    xt_lst.append(xt)
+                    xit = xit + vit
+                    xi_preds.append(xit)
 
-                at = torch.cat(at_lst).view(self.seq_len, pt, d)
-                vt = torch.cat(vt_lst).view(self.seq_len, pt, d)
-                xt = torch.cat(xt_lst).view(self.seq_len, pt, d)
-
-                xb = x[i, 1 : self.seq_len]
-                vb = v[i, : self.seq_len]
+                ait = torch.cat(ai_preds).view(pred_len, self.seq_len - 1, pt, d)
+                vit = torch.cat(vi_preds).view(pred_len, self.seq_len - 1, pt, d)
+                xit = torch.cat(xi_preds).view(pred_len, self.seq_len - 1, pt, d)
                 results.append(
                     {
-                        "x_true": xb.detach().cpu().numpy(),
-                        "v_true": vb.detach().cpu().numpy(),
-                        "x_pred": xt.detach().cpu().numpy(),
-                        "v_pred": vt.detach().cpu().numpy(),
-                        "a_pred": at.detach().cpu().numpy(),
+                        "x_true": xi[self.seq_len :].detach().cpu().numpy(),
+                        "v_true": vi[self.seq_len - 1 :].detach().cpu().numpy(),
+                        "x_pred": xit.detach().cpu().numpy(),
+                        "v_pred": vit.detach().cpu().numpy(),
+                        "a_pred": ait.detach().cpu().numpy(),
                     }
                 )
 
