@@ -20,18 +20,18 @@ class TransformerEncoder(nn.Module):
         )
         self.emb_out = nn.Linear(config.hidden_ndim, config.seq_len - 1)
 
-    def pos_encoding_t(self, t):
-        b, seq_len, pt, d = t.size()
-        t = t.view(b, seq_len, pt * d)
+    def pos_encoding_dt(self, dt):
+        b, seq_len, pt, d = dt.size()
+        dt = dt.view(b, seq_len, pt * d)
         ch = pt * d
 
         inv_freq = 1.0 / (
-            10000 ** (torch.arange(0, ch, 2, device=t.device) / ch)
+            10000 ** (torch.arange(0, ch, 2, device=dt.device) / ch)
         )
-        pos_enc_sin = torch.sin(t[:, :, 0::2] * inv_freq)
+        pos_enc_sin = torch.sin(dt[:, :, 0::2] * inv_freq)
         if ch % 2 == 1:
             inv_freq = inv_freq[:-1]
-        pos_enc_cos = torch.cos(t[:, :, 1::2] * inv_freq)
+        pos_enc_cos = torch.cos(dt[:, :, 1::2] * inv_freq)
 
         pos_enc = torch.cat([pos_enc_sin, pos_enc_cos], dim=-1)
         pos_enc = pos_enc.view(b, seq_len, pt, d).float()
@@ -41,10 +41,8 @@ class TransformerEncoder(nn.Module):
         # x (b, seq_len, pt, b)
         b, seq_len, pt, d = x.size()
 
-        t = torch.arange(0, x.size(1), device=dt.device)
-        t = t.view(1, seq_len, 1, 1).repeat(b, 1, pt, d) + dt
-        t = self.pos_encoding_t(t)
-        x = x + t
+        dt = self.pos_encoding_dt(dt)
+        x = x + dt
 
         x = x.view(b, seq_len, pt * d)
         x = x.permute(0, 2, 1)  # (b, pt*d, seq_len)

@@ -1,19 +1,19 @@
 seq_len: 30
-
-sigma: 0.01
+steps: 10
+sigma: 0.001
 
 # model
 hidden_ndim: 256
-nlayers: 1
-nheads: 16
+nlayers: 6
+nheads: 8
 dropout: 0.1
 
 # optim
 lr: 0.01
 lr_min: 0.00001
-t_max: 100
+t_max: 40
 
 # training
-epochs: 900
+epochs: 200
 batch_size: 256
 num_workers: 8
