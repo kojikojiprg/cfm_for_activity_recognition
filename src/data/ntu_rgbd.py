@@ -63,18 +63,23 @@ training_ids = [
 
 
 class NTU_RGBD(torch.utils.data.Dataset):
-    def __init__(self, root, seq_len, stage, split_type="cross_subject"):
+    def __init__(self, root, seq_len, is_train, split_type="cross_subject"):
         super().__init__()
         self.root = root
         self.seq_len = seq_len
-        self.stage = stage
+        self.is_train = is_train
         self.split_type = split_type
 
         self.labels = []
-        self.skeleton_seqs = []
-        self.create()
+        self.x0 = []
+        self.x1 = []
 
-    def is_train(self, sid):
+        if is_train:
+            self.create_train()
+        else:
+            self.create_pred()
+
+    def sid_is_train(self, sid):
         if self.split_type == "cross_subject":
             return sid in training_ids
         elif self.split_type == "cross_suetup":
@@ -89,9 +94,9 @@ class NTU_RGBD(torch.utils.data.Dataset):
             file_name = os.path.basename(path).replace(".skeleton", "")
 
             subject_id = int(file_name[9:12])
-            if self.stage == "train" and not self.is_train(subject_id):
+            if self.is_train and not self.sid_is_train(subject_id):
                 continue
-            elif self.stage == "test" and self.is_train(subject_id):
+            elif not self.is_train and self.sid_is_train(subject_id):
                 continue
 
             label = int(file_name[-3:])
@@ -104,30 +109,55 @@ class NTU_RGBD(torch.utils.data.Dataset):
         return data_dicts
 
     def split_seq(self, val):
-        seqs = []
-        for i in range(len(val) - self.seq_len + 1):
-            seqs.append(val[i : i + self.seq_len])
-        return seqs
+        x0 = []
+        x1 = []
+        for i in range(len(val) - self.seq_len):
+            x0.append(val[i : i + self.seq_len].astype(np.float32))
+            x1.append(val[i + 1 : i + self.seq_len + 1].astype(np.float32))
+        return x0, x1
 
-    def create(self):
+    def create_train(self):
         data_dicts = self.load()
 
         for data_dict in tqdm(data_dicts, ncols=100, desc="creating"):
             label = data_dict["label"]
             for key, val in data_dict.items():
                 if "skel" in key:
-                    seqs = self.split_seq(val)
-                    self.skeleton_seqs += seqs
-                    self.labels += [label for _ in range(len(seqs))]
+                    x0, x1 = self.split_seq(val)
+                    self.x0 += x0
+                    self.x1 += x1
+                    self.labels += [label for _ in range(len(x0))]
+
+    @staticmethod
+    def pad_skeleton_seq(skel_seq, length=500):
+        return np.pad(
+            skel_seq,
+            ((0, length - len(skel_seq)), (0, 0), (0, 0)),
+            "constant",
+            constant_values=np.nan,
+        )
+
+    def create_pred(self):
+        data_dicts = self.load()
+
+        for data_dict in tqdm(data_dicts, ncols=100, desc="creating"):
+            label = data_dict["label"]
+            for key, val in data_dict.items():
+                if "skel" in key:
+                    self.x0.append(val)
+                    self.labels.append(label)
 
     def __len__(self):
         return len(self.labels)
 
     def __getitem__(self, idx):
         label = self.labels[idx]
-        skel_seq = self.skeleton_seqs[idx]
-
-        return skel_seq, label
+        x0 = self.x0[idx]
+        if self.is_train:
+            x1 = self.x1[idx]
+            return x0, x1, label
+        else:
+            return x0, label
 
 
 def _read_skeleton(file_path, save_skelxyz=True, save_rgbxy=True, save_depthxy=True):
