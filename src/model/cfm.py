@@ -8,22 +8,31 @@ class ConditionalFlowMatcher:
         self.steps = config.steps
         self.sigma = config.sigma
 
+    def mu_dt(self, v0, v1, dt):
+        return dt * v1 + (1 - dt) * v0
+
+    def sigma_dt(self, dt):
+        return self.sigma * (1 - dt)
+
     def sample_vt(self, v0, v1, dt):
-        vt_dt = dt * v1 + (1 - dt) * v0
-        eps = torch.randn_like(vt_dt)
-        return vt_dt.to(torch.float32) + self.sigma * (1 - dt) * eps
+        b, seq_len, pt, d = v0.size()
+        dt = dt.view(b, 1, 1, 1).repeat(1, seq_len, pt, d)
+
+        mu = self.mu_dt(v0, v1, dt)
+        sigma = self.sigma_dt(dt)
+        eps = torch.randn_like(mu)
+        return mu + sigma * eps
 
     def sample_ut(self, v0, v1):
-        return v1 - v0
+        return v1
 
     @torch.no_grad()
     def sample_location(self, v0, v1):
         # v (b, seq_len - 1, pt, d)
-        b, seq_len, pt, d = v0.size()
-        dt = torch.randint(self.steps, (b,)) / self.steps
-        dt = dt.view(b, 1, 1, 1).repeat(1, seq_len, pt, d).to(v0.device)
+        dt = torch.randint(self.steps, (v0.size(0),)) / self.steps
+        dt = dt.to(v0.device)
 
         vt = self.sample_vt(v0, v1, dt)  # dt * v1 + (1 - dt) * v0
-        ut = self.sample_ut(v0, v1)
+        ut = self.sample_ut(v0, v1)  # v1
 
         return dt, vt, ut

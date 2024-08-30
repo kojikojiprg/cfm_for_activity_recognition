@@ -1,4 +1,5 @@
 seq_len: 30
+steps: 10
 sigma: 0.1
 
 # model
