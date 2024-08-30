@@ -144,7 +144,8 @@ class NTU_RGBD(torch.utils.data.Dataset):
             label = data_dict["label"]
             for key, val in data_dict.items():
                 if "skel" in key:
-                    self.x0.append(val)
+                    val = self.pad_skeleton_seq(val)
+                    self.x0.append(val.astype(np.float32))
                     self.labels.append(label)
 
     def __len__(self):
