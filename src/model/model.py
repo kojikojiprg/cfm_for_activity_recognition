@@ -8,12 +8,13 @@ from .nn import TransformerEncoder
 
 
 class ConditionalFlowMatching(LightningModule):
-    def __init__(self, config, skel_size=(25, 3), is_train=True):
+    def __init__(self, config, n_clusters=120, skel_size=(25, 3)):
         super().__init__()
         self.config = config
         self.seq_len = config.seq_len
         self.steps = config.steps
         self.sigma = config.sigma
+        self.n_clusters = n_clusters
         self.skel_size = skel_size
         self.cfm = None
         self.net = None
@@ -23,7 +24,7 @@ class ConditionalFlowMatching(LightningModule):
         if self.cfm is None:
             self.cfm = ConditionalFlowMatcher(self.config)
         if self.net is None:
-            self.net = TransformerEncoder(self.config, self.skel_size)
+            self.net = TransformerEncoder(self.config, self.n_clusters, self.skel_size)
 
     def configure_optimizers(self):
         opt = torch.optim.Adam(self.net.parameters(), self.config.lr)
@@ -46,7 +47,7 @@ class ConditionalFlowMatching(LightningModule):
         t, vt, ut = self.cfm.sample_location(v0, v1)
 
         # calc at
-        at = self.net(t, vt)
+        at = self.net(t, vt, label)
 
         # calc reconstructed vt
         b, seq_len, pt, d = v0.size()

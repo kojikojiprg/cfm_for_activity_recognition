@@ -29,7 +29,10 @@ class ConditionalFlowMatcher:
     @torch.no_grad()
     def sample_location(self, v0, v1):
         # v (b, seq_len - 1, pt, d)
-        t = torch.randint(self.steps, (v0.size(0),)) / self.steps
+        if self.steps > 1:
+            t = torch.randint(self.steps, (v0.size(0),)) / self.steps
+        else:
+            t = torch.zeros((v0.size(0),))
         t = t.to(v0.device)
 
         vt = self.sample_vt(v0, v1, t)  # v0
