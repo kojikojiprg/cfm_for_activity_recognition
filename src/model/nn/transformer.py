@@ -7,8 +7,9 @@ class TransformerEncoder(nn.Module):
     def __init__(self, config, size):
         super().__init__()
         self.hidden_ndim = config.hidden_ndim
-        self.emb_t = nn.Linear(1, self.hidden_ndim)
-        self.emb_in = nn.Linear(config.seq_len - 1, config.hidden_ndim)
+        self.seq_len = config.seq_len - 1
+        self.emb_t = nn.Linear(1, config.hidden_ndim)
+        self.emb_in = nn.Linear(self.seq_len, self.hidden_ndim)
         self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=True)
         self.encoders = nn.ModuleList(
             [
@@ -18,18 +19,19 @@ class TransformerEncoder(nn.Module):
                 for _ in range(config.nlayers)
             ]
         )
-        self.emb_out = nn.Linear(config.hidden_ndim, config.seq_len - 1)
+        self.emb_out = nn.Linear(self.hidden_ndim, self.seq_len)
 
     def forward(self, t, x, *args, **kwargs):
         # x (b, seq_len, pt, d)
         b, seq_len, pt, d = x.size()
 
-        t = t.view(b, 1, 1)
-        t = self.emb_t(t).repeat(1, pt * d, 1)
+        t = t.view(b, 1)
+        t = self.emb_t(t)
+        t = t.view(b, 1, self.hidden_ndim).repeat(1, pt * d, 1)
 
-        x = x.contiguous().view(b, seq_len, pt * d)
-        x = x.permute(0, 2, 1)  # (b, pt*d, seq_len)
-        x = self.emb_in(x) + t
+        x = x.view(b, seq_len, pt * d)
+        x = x.permute(0, 2, 1)  # (b, pt * d, seq_len)
+        x = self.emb_in(x) + t  # (b, pt * d, hidden_ndim)
 
         x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
 
@@ -37,7 +39,7 @@ class TransformerEncoder(nn.Module):
             x, attn_w = layer(x)
 
         x = self.emb_out(x)
-        x = x.permute(0, 2, 1)  # (b, seq_len, pt*d)
+        x = x.permute(0, 2, 1)  # (b, seq_len, pt * d)
         x = x.view(b, seq_len, pt, d)
         return x
 

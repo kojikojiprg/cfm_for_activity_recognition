@@ -73,6 +73,7 @@ class NTU_RGBD(torch.utils.data.Dataset):
         self.labels = []
         self.x0 = []
         self.x1 = []
+        self.seq_len_lst = []
 
         if is_train:
             self.create_train()
@@ -100,7 +101,7 @@ class NTU_RGBD(torch.utils.data.Dataset):
                 continue
 
             label = int(file_name[-3:])
-            if label != 27:  # jump up
+            if label not in [1, 24, 27]:  # drink water, kicking something, jump up
                 continue
 
             data_dict = _read_skeleton(path)
@@ -144,9 +145,10 @@ class NTU_RGBD(torch.utils.data.Dataset):
             label = data_dict["label"]
             for key, val in data_dict.items():
                 if "skel" in key:
+                    self.labels.append(label)
+                    self.seq_len_lst.append(len(val))
                     val = self.pad_skeleton_seq(val)
                     self.x0.append(val.astype(np.float32))
-                    self.labels.append(label)
 
     def __len__(self):
         return len(self.labels)
@@ -158,7 +160,8 @@ class NTU_RGBD(torch.utils.data.Dataset):
             x1 = self.x1[idx]
             return x0, x1, label
         else:
-            return x0, label
+            seq_len = self.seq_len_lst[idx]
+            return x0, seq_len, label
 
 
 def _read_skeleton(file_path, save_skelxyz=True, save_rgbxy=True, save_depthxy=True):

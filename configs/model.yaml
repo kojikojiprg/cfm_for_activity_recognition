@@ -1,6 +1,6 @@
 seq_len: 30
 steps: 10
-sigma: 0.1
+sigma: 0.01
 
 # model
 hidden_ndim: 256
