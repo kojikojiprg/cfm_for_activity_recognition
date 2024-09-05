@@ -10,11 +10,8 @@ class ConditionalFlowMatcher:
 
     def mu_t(self, v0, v1, t):
         return t * v1 + (1 - t) * v0
-        # return t * v1
 
     def sigma_t(self, t):
-        # return 1 - (1 - self.sigma) * t
-        # return self.sigma * (1 - t)
         return self.sigma
 
     def sample_vt(self, v0, v1, t):
@@ -23,10 +20,8 @@ class ConditionalFlowMatcher:
         eps = torch.randn_like(mu_t)
         return mu_t + sigma_t * eps
 
-    def sample_ut(self, vt, v1, t):
-        # sigma_t = self.sigma_t(t)
-        # return (v1 - (1 - self.sigma) * vt) / sigma_t
-        return v1 - vt
+    def sample_ut(self, v0, v1, t):
+        return v1 - v0
 
     @torch.no_grad()
     def sample_location(self, v0, v1):
@@ -40,7 +35,6 @@ class ConditionalFlowMatcher:
         t_expand = t.view(b, 1, 1, 1).repeat(1, seq_len, pt, d)
 
         vt = self.sample_vt(v0, v1, t_expand)
-        # ut = self.sample_ut(vt, v1, t_expand)
         ut = self.sample_ut(v0, v1, t_expand)
 
         return t, vt, ut

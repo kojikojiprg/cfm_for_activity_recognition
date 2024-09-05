@@ -53,21 +53,16 @@ class ConditionalFlowMatching(LightningModule):
         # calc at
         at = self.net(t, vt, label)
 
-        # calc reconstructed vt
-        b, seq_len, pt, d = v0.size()
-        t = t.view(b, 1, 1, 1).repeat(1, seq_len, pt, d)
-        recon_vt = vt + at * (1 - t)
-
-        # calc reconstructed x
-        recon_xt = x0[:, 1:] + recon_vt
-
         # calc loss
+        b, seq_len, pt, d = v0.size()
         loss_a = F.mse_loss(at, ut)
-        loss_v = F.mse_loss(recon_vt, v1)
-        loss_x = F.mse_loss(recon_xt, x1[:, 1:])
+        at = at.view(b * seq_len * pt, d)
+        ut = ut.view(b * seq_len * pt, d)
+        target = torch.ones((at.size(0),)).to(self.device)
+        loss_cos = F.cosine_embedding_loss(at, ut, target)
 
-        loss = loss_a + loss_v + loss_x
-        loss_dict = dict(a=loss_a, v=loss_v, x=loss_x, loss=loss)
+        loss = loss_a + loss_cos
+        loss_dict = dict(a=loss_a, cos=loss_cos, loss=loss)
         self.log_dict(loss_dict, prog_bar=True, logger=True)
         return loss
 
@@ -104,24 +99,32 @@ class ConditionalFlowMatching(LightningModule):
 
                 # update vt
                 vit = vit.view(1, self.seq_len - 1, pt, d)
-                vit = n_ode.trajectory(vit, t_span=torch.linspace(0, 1, self.steps))
+                vit = n_ode.trajectory(vit, t_span=torch.linspace(0, 1, self.steps + 1))
 
                 # test plot
-                n = 10
-                vit = vit.view(self.steps, (self.seq_len - 1) * pt, d)
+                n = 25
+                vit = vit.view(self.steps + 1, (self.seq_len - 1) * pt, d)
                 vit_plot = vit.detach().cpu().numpy()
-                plt.scatter(vit_plot[0, :n, 0], vit_plot[0, :n, 1], s=4, c="black")
-                plt.scatter(vit_plot[:, :n, 0], vit_plot[:, :n, 1], s=1, c="olive")
-                plt.scatter(vit_plot[-1, :n, 0], vit_plot[-1, :n, 1], s=4, c="blue")
                 vit_pre = vi[t : t + self.seq_len - 1].detach()
                 vit_pre = vit_pre.view((self.seq_len - 1) * pt, d).cpu().numpy()
                 vit_nxt = vi[t + 1 : t + self.seq_len].detach()
                 vit_nxt = vit_nxt.view((self.seq_len - 1) * pt, d).cpu().numpy()
+                plt.scatter(vit_plot[0, :n, 0], vit_plot[0, :n, 1], s=4, c="black")
+                plt.scatter(vit_plot[:, :n, 0], vit_plot[:, :n, 1], s=1, c="olive")
+                plt.scatter(vit_plot[-1, :n, 0], vit_plot[-1, :n, 1], s=4, c="blue")
                 plt.scatter(vit_pre[:n, 0], vit_pre[:n, 1], s=2, c="lime")
                 plt.scatter(vit_nxt[:n, 0], vit_nxt[:n, 1], s=2, c="red")
+                for i in range(0, (self.seq_len - 1) * pt, n):
+                    plt.plot(
+                        [vit_pre[i, 0], vit_nxt[i, 0]],
+                        [vit_pre[i, 1], vit_nxt[i, 1]],
+                        c="skyblue",
+                        linestyle="--",
+                        linewidth=1,
+                    )
                 plt.show()
 
-                if t == 4:
+                if t == 0:
                     return []
 
                 vit = vit[-1]
