@@ -13,10 +13,7 @@ class TransformerEncoder(nn.Module):
 
         self.emb_t = nn.Linear(1, config.hidden_ndim)
         self.emb_y = nn.Linear(n_clusters, self.hidden_ndim)
-        self.emb_in = nn.Sequential(
-            SwiGLU(skel_size[1], self.hidden_ndim),
-            nn.Linear(self.hidden_ndim, self.hidden_ndim),
-        )
+        self.emb_in = nn.Linear(skel_size[1], self.hidden_ndim)
         self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=False)
         size = (self.seq_len, skel_size[0])
         self.encoders = nn.ModuleList(
@@ -27,10 +24,7 @@ class TransformerEncoder(nn.Module):
                 for _ in range(config.nlayers)
             ]
         )
-        self.emb_out = nn.Sequential(
-            SwiGLU(self.hidden_ndim),
-            nn.Linear(self.hidden_ndim, skel_size[1]),
-        )
+        self.emb_out = nn.Linear(self.hidden_ndim, skel_size[1])
 
     def forward(self, t, x, y, *args, **kwargs):
         # x (b, seq_len, pt, d)

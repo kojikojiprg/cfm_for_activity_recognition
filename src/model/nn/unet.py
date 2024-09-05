@@ -1,161 +1,106 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-
-
-class SelfAttention(nn.Module):
-    def __init__(self, channels):
-        super(SelfAttention, self).__init__()
-        self.channels = channels
-        self.ln = nn.LayerNorm([channels])
-        self.mha = nn.MultiheadAttention(channels, 4, batch_first=True)
-        self.ff_self = nn.Sequential(
-            nn.LayerNorm([channels]),
-            nn.Linear(channels, channels),
-            nn.SiLU(),
-            nn.Linear(channels, channels),
-        )
-
-    def forward(self, x):
-        x = x.swapaxes(1, 2)
-        x_ln = self.ln(x)
-        attention_value, _ = self.mha(x_ln, x_ln, x_ln)
-        attention_value = attention_value + x
-        attention_value = self.ff_self(attention_value) + attention_value
-        return attention_value.swapaxes(1, 2)
 
 
 class Conv(nn.Module):
-    def __init__(self, in_channels, out_channels, mid_channels=None, residual=False):
+    def __init__(self, in_ch, out_ch):
         super().__init__()
-        self.residual = residual
-        if not mid_channels:
-            mid_channels = out_channels
-        self.double_conv = nn.Sequential(
-            nn.Conv1d(in_channels, mid_channels, kernel_size=1, bias=False),
-            nn.GroupNorm(1, mid_channels),
+        self.conv = nn.Sequential(
+            nn.Conv2d(in_ch, out_ch, kernel_size=1, bias=False),
+            nn.GroupNorm(1, out_ch),
             nn.SiLU(),
-            nn.Conv1d(mid_channels, out_channels, kernel_size=1, bias=False),
-            nn.GroupNorm(1, out_channels),
+            nn.Conv2d(out_ch, out_ch, kernel_size=1, bias=False),
+            nn.GroupNorm(1, out_ch),
+            nn.SiLU(),
         )
 
     def forward(self, x):
-        if self.residual:
-            return F.silu(x + self.double_conv(x))
-        else:
-            return self.double_conv(x)
+        return self.conv(x)
 
 
 class Down(nn.Module):
-    def __init__(self, in_channels, out_channels, emb_dim=256):
+    def __init__(self, in_ch, out_ch, hidden_ndim):
         super().__init__()
-        self.maxpool_conv = nn.Sequential(
-            nn.MaxPool1d(2),
-            Conv(in_channels, in_channels, residual=True),
-            Conv(in_channels, out_channels),
+        self.conv = nn.Sequential(
+            Conv(in_ch, out_ch),
+            nn.MaxPool2d((2, 1)),
         )
 
         self.emb_layer = nn.Sequential(
             nn.SiLU(),
-            nn.Linear(
-                emb_dim,
-                out_channels
-            ),
+            nn.Linear(hidden_ndim, out_ch),
         )
 
     def forward(self, x, t):
-        x = self.maxpool_conv(x)
-        emb = self.emb_layer(t)[:, :, None].repeat(1, 1, x.shape[-1])
-        return x + emb
+        x = self.conv(x)
+        b, ch, seq_len, pt = x.size()
+        t = self.emb_layer(t).view(b, ch, 1, 1).repeat(1, 1, seq_len, pt)
+        return x + t
 
 
 class Up(nn.Module):
-    def __init__(self, in_channels, out_channels, size, emb_dim=256):
+    def __init__(self, in_ch, out_ch, size, hidden_ndim):
         super().__init__()
 
-        self.up = nn.Upsample(size, mode="linear", align_corners=True)
-        self.conv = nn.Sequential(
-            Conv(in_channels, in_channels, residual=True),
-            Conv(in_channels, out_channels, in_channels // 2),
-        )
+        self.up = nn.Upsample(size, mode="bilinear", align_corners=True)
+        self.conv = Conv(in_ch, out_ch)
 
         self.emb_layer = nn.Sequential(
             nn.SiLU(),
-            nn.Linear(
-                emb_dim,
-                out_channels
-            ),
+            nn.Linear(hidden_ndim, out_ch),
         )
 
     def forward(self, x, skip_x, t):
         x = self.up(x)
         x = torch.cat([skip_x, x], dim=1)
         x = self.conv(x)
-        emb = self.emb_layer(t)[:, :, None].repeat(1, 1, x.shape[-1])
-        return x + emb
+        b, ch, seq_len, pt = x.size()
+        t = self.emb_layer(t).view(b, ch, 1, 1).repeat(1, 1, seq_len, pt)
+        return x + t
 
 
 class UNet(nn.Module):
-    def __init__(self, config, size, num_classes=None):
+    def __init__(self, config, num_classes, skel_size):
         super().__init__()
+        self.seq_len = config.seq_len - 1
         self.hidden_ndim = config.hidden_ndim
-        size = size[0] * size[1]
+        size = (self.seq_len, skel_size[0] * skel_size[1])
 
-        self.inc = Conv(1, 64)
+        self.emb_y = nn.Embedding(num_classes, self.hidden_ndim)
+
+        self.conv_in = Conv(1, 64)
         self.down1 = Down(64, 128, config.hidden_ndim)
-        self.sa1 = SelfAttention(128)
-        self.down2 = Down(128, 256, config.hidden_ndim)
-        self.sa2 = SelfAttention(256)
 
-        self.bot1 = Conv(256, 512)
-        self.bot2 = Conv(512, 512)
-        self.bot3 = Conv(512, 256)
+        self.bot1 = Conv(128, 256)
+        self.bot2 = Conv(256, 256)
+        self.bot3 = Conv(256, 128)
 
-        self.up1 = Up(256 + 128, 128, size // 2, config.hidden_ndim)
-        self.sa3 = SelfAttention(128)
-        self.up2 = Up(128 + 64, 64, size, config.hidden_ndim)
-        self.sa4 = SelfAttention(64)
-        self.outc = nn.Conv1d(64, 1, kernel_size=1)
+        self.up1 = Up(128 + 64, 128, size, config.hidden_ndim)
+        self.conv_out = nn.Sequential(Conv(128, 64), Conv(64, 1))
 
-        if num_classes is not None:
-            self.label_emb = nn.Embedding(num_classes, self.hidden_ndim)
-
-    def pos_encoding(self, t, channels):
-        inv_freq = 1.0 / (
-            10000
-            ** (torch.arange(0, channels, 2, device=t.device).float() / channels)
-        )
-        pos_enc_a = torch.sin(t.repeat(1, channels // 2) * inv_freq)
-        pos_enc_b = torch.cos(t.repeat(1, channels // 2) * inv_freq)
+    def pos_encoding(self, t, hidden_ndim):
+        freq = 10000 ** (torch.arange(0, hidden_ndim, 2).to(t.device) / hidden_ndim)
+        pos_enc_a = torch.sin(t.repeat(1, hidden_ndim // 2) / freq)
+        pos_enc_b = torch.cos(t.repeat(1, hidden_ndim // 2) / freq)
         pos_enc = torch.cat([pos_enc_a, pos_enc_b], dim=-1)
         return pos_enc
 
-    def forward(self, tau, v, y=None):
-        b, pt, d = v.size()
-        v = v.view(b, 1, pt * d)
+    def forward(self, t, x, y):
+        b, seq_len, pt, d = x.size()
 
-        tau = tau.unsqueeze(-1).type(torch.float)
-        tau = self.pos_encoding(tau, self.hidden_ndim)
+        t = self.pos_encoding(t.view(b, 1), self.hidden_ndim)
+        y = self.emb_y(y)
+        t = t + y
 
-        if y is not None:
-            tau += self.label_emb(y)
+        x = x.view(b, 1, seq_len, pt * d)
+        x1 = self.conv_in(x)
+        x2 = self.down1(x1, t)
 
-        x1 = self.inc(v)
+        x2 = self.bot1(x2)
+        x2 = self.bot2(x2)
+        x2 = self.bot3(x2)
 
-        x2 = self.down1(x1, tau)
-        x2 = self.sa1(x2)
-        x3 = self.down2(x2, tau)
-        x3 = self.sa2(x3)
+        x = self.up1(x2, x1, t)
+        x = self.conv_out(x)
 
-        x3 = self.bot1(x3)
-        x3 = self.bot2(x3)
-        x3 = self.bot3(x3)
-
-        v = self.up1(x3, x2, tau)
-        v = self.sa3(v)
-        v = self.up2(v, x1, tau)
-        v = self.sa4(v)
-
-        output = self.outc(v)
-        output = output.view(b, pt, d)
-        return output
+        return x.view(b, seq_len, pt, d)
