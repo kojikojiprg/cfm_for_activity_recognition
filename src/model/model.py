@@ -55,9 +55,10 @@ class ConditionalFlowMatching(LightningModule):
 
         # calc loss
         b, seq_len, pt, d = v0.size()
-        loss_a = F.mse_loss(at, ut)
         at = at.view(b * seq_len * pt, d)
         ut = ut.view(b * seq_len * pt, d)
+        loss_a = F.mse_loss(at, ut, reduction="none")
+        loss_a = loss_a.sum(dim=-1).mean()
         target = torch.ones((at.size(0),)).to(self.device)
         loss_cos = F.cosine_embedding_loss(at, ut, target)
 
