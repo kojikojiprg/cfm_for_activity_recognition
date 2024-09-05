@@ -63,10 +63,11 @@ training_ids = [
 
 
 class NTU_RGBD(torch.utils.data.Dataset):
-    def __init__(self, root, seq_len, is_train, split_type="cross_subject"):
+    def __init__(self, root, seq_len, stride, is_train, split_type="cross_subject"):
         super().__init__()
         self.root = root
         self.seq_len = seq_len
+        self.stride = stride
         self.is_train = is_train
         self.split_type = split_type
 
@@ -112,9 +113,9 @@ class NTU_RGBD(torch.utils.data.Dataset):
     def split_seq(self, val):
         x0 = []
         x1 = []
-        for i in range(len(val) - self.seq_len):
+        for i in range(len(val) - self.seq_len - self.stride + 1):
             x0.append(val[i : i + self.seq_len].astype(np.float32))
-            x1.append(val[i + 1 : i + self.seq_len + 1].astype(np.float32))
+            x1.append(val[i + self.stride : i + self.seq_len + self.stride].astype(np.float32))
         return x0, x1
 
     def create_train(self):

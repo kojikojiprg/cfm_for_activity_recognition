@@ -1,4 +1,6 @@
+import matplotlib.pyplot as plt
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 from torchdyn.core import NeuralODE
@@ -8,7 +10,7 @@ from .nn import TransformerEncoder
 
 
 class ConditionalFlowMatching(LightningModule):
-    def __init__(self, config, n_clusters=120, skel_size=(25, 3)):
+    def __init__(self, config, n_clusters=120, skel_size=(25, 3), mag=10):
         super().__init__()
         self.config = config
         self.seq_len = config.seq_len
@@ -16,9 +18,9 @@ class ConditionalFlowMatching(LightningModule):
         self.sigma = config.sigma
         self.n_clusters = n_clusters
         self.skel_size = skel_size
+        self.mag = mag
         self.cfm = None
         self.net = None
-        self.n_ode = None
 
     def configure_model(self):
         if self.cfm is None:
@@ -40,6 +42,8 @@ class ConditionalFlowMatching(LightningModule):
 
     def training_step(self, batch, batch_idx):
         x0, x1, label = batch
+        x0 = x0 * self.mag
+        x1 = x1 * self.mag
 
         v0 = self.calc_verocity(x0)
         v1 = self.calc_verocity(x1)
@@ -69,51 +73,64 @@ class ConditionalFlowMatching(LightningModule):
 
     @torch.no_grad()
     def predict_step(self, batch, batch_idx):
-        if self.n_ode is None:
-            self.n_ode = NeuralODE(
-                self.net, "dopri5", atol=1e-4, rtol=1e-4, sensitivity="adjoint"
-            )
 
         x, seq_lens, label = batch
+        x = x * self.mag
         v = self.calc_verocity(x)
         b, _, pt, d = x.size()
 
         # sample from cfm
         results = []
         for i in range(x.size(0)):
+            n_ode = NeuralODE(
+                wrapper(self.net, label[i]),
+                "dopri5",
+                atol=1e-4,
+                rtol=1e-4,
+                sensitivity="adjoint",
+            )
             # remove padding
             xi = x[i, : seq_lens[i]]
             vi = v[i, : seq_lens[i] - 1]
+            xit = xi[1 : self.seq_len]
+            vit = vi[: self.seq_len - 1]
 
             vi_preds = []
             xi_preds = []
             pred_len = seq_lens[i] - self.seq_len
             for t in range(pred_len):
-                xit = xi[t + 1 : t + self.seq_len]
+                # xit = xi[t + 1 : t + self.seq_len]
                 vit = vi[t : t + self.seq_len - 1]
 
                 # update vt
                 vit = vit.view(1, self.seq_len - 1, pt, d)
-                vit = self.n_ode.trajectory(
-                    vit, t_span=torch.linspace(0, 1, self.steps)
-                )
+                vit = n_ode.trajectory(vit, t_span=torch.linspace(0, 1, self.steps))
+
+                # test plot
+                n = 10
+                vit = vit.view(self.steps, (self.seq_len - 1) * pt, d)
+                vit_plot = vit.detach().cpu().numpy()
+                plt.scatter(vit_plot[0, :n, 0], vit_plot[0, :n, 1], s=4, c="black")
+                plt.scatter(vit_plot[:, :n, 0], vit_plot[:, :n, 1], s=1, c="olive")
+                plt.scatter(vit_plot[-1, :n, 0], vit_plot[-1, :n, 1], s=4, c="blue")
+                vit_pre = vi[t : t + self.seq_len - 1].detach()
+                vit_pre = vit_pre.view((self.seq_len - 1) * pt, d).cpu().numpy()
+                vit_nxt = vi[t + 1 : t + self.seq_len].detach()
+                vit_nxt = vit_nxt.view((self.seq_len - 1) * pt, d).cpu().numpy()
+                plt.scatter(vit_pre[:n, 0], vit_pre[:n, 1], s=2, c="lime")
+                plt.scatter(vit_nxt[:n, 0], vit_nxt[:n, 1], s=2, c="red")
+                plt.show()
+
+                if t == 4:
+                    return []
+
                 vit = vit[-1]
                 vi_preds.append(vit)
 
                 # update xt
                 xit = xit.view(1, self.seq_len - 1, pt, d)
-                xit = xit + vit
+                xit = xit + vit.view(1, self.seq_len - 1, pt, d)
                 xi_preds.append(xit)
-
-                v_loss = F.mse_loss(
-                    vit,
-                    vi[t + 1 : t + self.seq_len].view(1, self.seq_len - 1, pt, d),
-                )
-                x_loss = F.mse_loss(
-                    xit,
-                    xi[t + 2 : t + self.seq_len + 1].view(1, self.seq_len - 1, pt, d),
-                )
-                print(v_loss.item(), x_loss.item())
 
             vi_preds = torch.cat(vi_preds).view(pred_len, self.seq_len - 1, pt, d)
             xi_preds = torch.cat(xi_preds).view(pred_len, self.seq_len - 1, pt, d)
@@ -127,3 +144,13 @@ class ConditionalFlowMatching(LightningModule):
             )
 
         return results
+
+
+class wrapper(nn.Module):
+    def __init__(self, model, label):
+        super().__init__()
+        self.model = model
+        self.label = label
+
+    def forward(self, t, x, *args, **kwargs):
+        return self.model(t, x, self.label)

@@ -5,7 +5,7 @@ from rotary_embedding_torch import RotaryEmbedding
 
 
 class TransformerEncoder(nn.Module):
-    def __init__(self, config, n_clusters, size):
+    def __init__(self, config, n_clusters, skel_size):
         super().__init__()
         self.hidden_ndim = config.hidden_ndim
         self.seq_len = config.seq_len - 1
@@ -14,10 +14,11 @@ class TransformerEncoder(nn.Module):
         self.emb_t = nn.Linear(1, config.hidden_ndim)
         self.emb_y = nn.Linear(n_clusters, self.hidden_ndim)
         self.emb_in = nn.Sequential(
-            SwiGLU(self.seq_len, self.hidden_ndim),
+            SwiGLU(skel_size[1], self.hidden_ndim),
             nn.Linear(self.hidden_ndim, self.hidden_ndim),
         )
-        self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=True)
+        self.pe = RotaryEmbedding(config.hidden_ndim, learned_freq=False)
+        size = (self.seq_len, skel_size[0])
         self.encoders = nn.ModuleList(
             [
                 TransformerEncoderBlock(
@@ -28,7 +29,7 @@ class TransformerEncoder(nn.Module):
         )
         self.emb_out = nn.Sequential(
             SwiGLU(self.hidden_ndim),
-            nn.Linear(self.hidden_ndim, self.seq_len),
+            nn.Linear(self.hidden_ndim, skel_size[1]),
         )
 
     def forward(self, t, x, y, *args, **kwargs):
@@ -38,24 +39,22 @@ class TransformerEncoder(nn.Module):
 
         t = t.view(b, 1)
         t = self.emb_t(t)
-        t = t.view(b, 1, self.hidden_ndim).repeat(1, pt * d, 1)
+        t = t.view(b, 1, self.hidden_ndim).repeat(1, seq_len * pt, 1)
 
-        x = x.view(b, seq_len, pt * d)
-        x = x.permute(0, 2, 1)  # (b, pt * d, seq_len)
-        x = self.emb_in(x) + t  # (b, pt * d, hidden_ndim)
+        x = x.view(b, seq_len * pt, d)
+        x = self.emb_in(x) + t  # (b, seq_len * pt, hidden_ndim)
 
         y = F.one_hot(y, self.n_clusters).to(torch.float32)
         y = self.emb_y(y).view(b, 1, self.hidden_ndim)
 
-        x = torch.cat([y, x], dim=1)  # (b, pt * d + 1, hidden_ndim)
+        x = torch.cat([y, x], dim=1)  # (b, seq_len * pt + 1, hidden_ndim)
         x = self.pe.rotate_queries_or_keys(x, seq_dim=1)
 
         for layer in self.encoders:
             x, attn_w = layer(x)
 
-        x = x[:, 1:]  # (b, pt * d, hidden_ndim)
+        x = x[:, 1:]  # (b, seq_len * pt, hidden_ndim)
         x = self.emb_out(x)
-        x = x.permute(0, 2, 1)  # (b, seq_len, pt * d)
         x = x.view(b, seq_len, pt, d)
         return x
 

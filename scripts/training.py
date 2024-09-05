@@ -66,7 +66,9 @@ if __name__ == "__main__":
     model_checkpoint.CHECKPOINT_NAME_LAST = filename + "-last-{epoch}"
 
     # load dataset
-    dataset = NTU_RGBD(data_root, config.seq_len, True, split_type="cross_subject")
+    dataset = NTU_RGBD(
+        data_root, config.seq_len, config.stride, True, split_type="cross_subject"
+    )
     dataloader = DataLoader(
         dataset,
         config.batch_size,
