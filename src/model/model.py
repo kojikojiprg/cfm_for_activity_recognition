@@ -6,11 +6,11 @@ from lightning.pytorch import LightningModule
 from torchdyn.core import NeuralODE
 
 from .cfm import ConditionalFlowMatcher
-from .nn import TransformerEncoder
+from .nn import UNet
 
 
 class ConditionalFlowMatching(LightningModule):
-    def __init__(self, config, n_clusters=120, skel_size=(25, 3), mag=10):
+    def __init__(self, config, n_clusters=120, skel_size=(25, 3), mag=1):
         super().__init__()
         self.config = config
         self.seq_len = config.seq_len
@@ -26,7 +26,7 @@ class ConditionalFlowMatching(LightningModule):
         if self.cfm is None:
             self.cfm = ConditionalFlowMatcher(self.config)
         if self.net is None:
-            self.net = TransformerEncoder(self.config, self.n_clusters, self.skel_size)
+            self.net = UNet(self.config, self.n_clusters, self.skel_size)
 
     def configure_optimizers(self):
         opt = torch.optim.Adam(self.net.parameters(), self.config.lr)
@@ -102,19 +102,21 @@ class ConditionalFlowMatching(LightningModule):
                 vit = n_ode.trajectory(vit, t_span=torch.linspace(0, 1, self.steps + 1))
 
                 # test plot
-                n = 25
+                n = 10
                 vit = vit.view(self.steps + 1, (self.seq_len - 1) * pt, d)
                 vit_plot = vit.detach().cpu().numpy()
                 vit_pre = vi[t : t + self.seq_len - 1].detach()
                 vit_pre = vit_pre.view((self.seq_len - 1) * pt, d).cpu().numpy()
                 vit_nxt = vi[t + 1 : t + self.seq_len].detach()
                 vit_nxt = vit_nxt.view((self.seq_len - 1) * pt, d).cpu().numpy()
+                vit_mdl = vit_nxt * 0.5 + vit_pre * 0.5
                 plt.scatter(vit_plot[0, :n, 0], vit_plot[0, :n, 1], s=4, c="black")
                 plt.scatter(vit_plot[:, :n, 0], vit_plot[:, :n, 1], s=1, c="olive")
                 plt.scatter(vit_plot[-1, :n, 0], vit_plot[-1, :n, 1], s=4, c="blue")
                 plt.scatter(vit_pre[:n, 0], vit_pre[:n, 1], s=2, c="lime")
                 plt.scatter(vit_nxt[:n, 0], vit_nxt[:n, 1], s=2, c="red")
-                for i in range(0, (self.seq_len - 1) * pt, n):
+                plt.scatter(vit_mdl[:n, 0], vit_mdl[:n, 1], s=4, c="pink")
+                for i in range(0, n):
                     plt.plot(
                         [vit_pre[i, 0], vit_nxt[i, 0]],
                         [vit_pre[i, 1], vit_nxt[i, 1]],

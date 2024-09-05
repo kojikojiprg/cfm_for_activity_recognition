@@ -23,7 +23,6 @@ class ConditionalFlowMatcher:
     def sample_ut(self, v0, v1, t):
         return v1 - v0
 
-    @torch.no_grad()
     def sample_location(self, v0, v1):
         # v (b, seq_len - 1, pt, d)
         if self.steps > 1:
