@@ -1,21 +1,21 @@
 seq_len: 5
 stride: 1
-steps: 10
-sigma: 0.0001
+steps: 1
+sigma: 0.0
 
 # model
 hidden_ndim: 256
-hidden_nch: 1024
-nlayers: 1
-nheads: 8
-dropout: 0.1
+hidden_nch: 512
+# nlayers: 1
+# nheads: 8
+# dropout: 0.1
 
 # optim
-lr: 0.0005
+lr: 0.001
 lr_min: 0.00001
-t_max: 20
+t_max: 40
 
 # training
-epochs: 100
+epochs: 120
 batch_size: 256
 num_workers: 8

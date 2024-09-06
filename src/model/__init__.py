@@ -1,1 +1,1 @@
-from .model import ConditionalFlowMatching
+from .model import FlowMatching

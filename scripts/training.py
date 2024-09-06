@@ -12,7 +12,7 @@ from torch.utils.data import DataLoader
 
 sys.path.append(".")
 from src.data import NTU_RGBD
-from src.model import ConditionalFlowMatching
+from src.model import FlowMatching
 from src.utils import yaml_handler
 
 if __name__ == "__main__":
@@ -50,10 +50,6 @@ if __name__ == "__main__":
         copy_config_path = os.path.join(checkpoint_dir, "model.yaml")
         shutil.copyfile(config_path, copy_config_path)
 
-    # copy config
-    copy_config_path = os.path.join(checkpoint_dir, "model.yaml")
-    shutil.copyfile(config_path, copy_config_path)
-
     # model checkpoint callback
     filename = f"cfm-seq_len{config.seq_len}-sig{config.sigma}"
     model_checkpoint = ModelCheckpoint(
@@ -78,7 +74,7 @@ if __name__ == "__main__":
     )
 
     # create model
-    model = ConditionalFlowMatching(config)
+    model = FlowMatching(config)
     ddp = DDPStrategy(find_unused_parameters=False, process_group_backend="nccl")
 
     logger = TensorBoardLogger("logs/", name="")

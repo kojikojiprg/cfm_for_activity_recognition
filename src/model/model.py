@@ -9,7 +9,7 @@ from .cfm import ConditionalFlowMatcher
 from .nn import UNet
 
 
-class ConditionalFlowMatching(LightningModule):
+class FlowMatching(LightningModule):
     def __init__(self, config, n_clusters=120, skel_size=(25, 3), mag=1):
         super().__init__()
         self.config = config
@@ -62,29 +62,39 @@ class ConditionalFlowMatching(LightningModule):
         target = torch.ones((at.size(0),)).to(self.device)
         loss_cos = F.cosine_embedding_loss(at, ut, target)
 
-        loss = loss_a + loss_cos
-        loss_dict = dict(a=loss_a, cos=loss_cos, loss=loss)
+        at = at.view(b, seq_len, pt, d)
+        at_cumsum = at.cumsum(dim=1)
+        loss_v = 0
+        for t in range(self.seq_len - 1):
+            recon_v1 = v0[:, 0] + at_cumsum[:, t]
+            loss_vt = F.mse_loss(recon_v1, v1[:, t], reduction="none")
+            loss_vt = loss_vt.sum(dim=-1).mean()
+            loss_v = loss_v + loss_vt
+
+        loss = loss_a * 0.1 + loss_cos + loss_v
+        loss_dict = dict(a=loss_a, cos=loss_cos, v=loss_v, loss=loss)
         self.log_dict(loss_dict, prog_bar=True, logger=True)
         return loss
 
     @torch.no_grad()
     def predict_step(self, batch, batch_idx):
-
         x, seq_lens, labels = batch
         x = x * self.mag
         v = self.calc_verocity(x)
         b, _, pt, d = x.size()
 
+        self.steps = 100
+
         # sample from cfm
         results = []
         for i in range(x.size(0)):
-            # n_ode = NeuralODE(
-            #     wrapper(self.net, labels[i]),
-            #     "dopri5",
-            #     atol=1e-4,
-            #     rtol=1e-4,
-            #     sensitivity="adjoint",
-            # )
+            n_ode = NeuralODE(
+                wrapper(self.net, labels[i]),
+                "dopri5",
+                atol=1e-4,
+                rtol=1e-4,
+                sensitivity="adjoint",
+            )
 
             xi = x[i, : seq_lens[i]]  # remove padding
             vi = v[i, : seq_lens[i] - 1]
@@ -100,14 +110,14 @@ class ConditionalFlowMatching(LightningModule):
 
                 # update vt
                 vit = vit.view(1, self.seq_len - 1, pt, d)
-                # vit = n_ode.trajectory(vit, t_span=torch.linspace(0, 1, self.steps + 1))
-                vit_preds = [vit.detach()]
-                for dt in range(self.steps):
-                    dt = torch.full((vit.size(0),), dt / self.steps).to(self.device)
-                    ait = self.net(dt, vit, labels[i])
-                    vit = vit + ait / self.steps
-                    vit_preds.append(vit.detach())
-                vit = torch.cat(vit_preds, dim=0)
+                vit = n_ode.trajectory(vit, t_span=torch.linspace(0, 1, self.steps + 1))
+                # vit_preds = [vit.detach()]
+                # for dt in range(self.steps):
+                #     dt = torch.full((vit.size(0),), dt / self.steps).to(self.device)
+                #     ait = self.net(dt, vit, labels[i])
+                #     vit = vit + ait / self.steps
+                #     vit_preds.append(vit.detach())
+                # vit = torch.cat(vit_preds, dim=0)
 
                 # test plot
                 n = 25
@@ -132,8 +142,8 @@ class ConditionalFlowMatching(LightningModule):
                         linestyle="--",
                         linewidth=1,
                     )
-                plt.xlim(-0.01, 0.01)
-                plt.ylim(-0.01, 0.01)
+                # plt.xlim(-0.01, 0.01)
+                # plt.ylim(-0.01, 0.01)
                 plt.show()
 
                 if t == 9:
