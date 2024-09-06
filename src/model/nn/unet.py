@@ -64,6 +64,7 @@ class UNet(nn.Module):
         super().__init__()
         self.seq_len = config.seq_len - 1
         self.hidden_ndim = config.hidden_ndim
+        self.lmd_pe = config.lmd_pe
         nch = config.hidden_nch
         size = (self.seq_len, skel_size[0] * skel_size[1])
 
@@ -91,7 +92,7 @@ class UNet(nn.Module):
     def forward(self, t, x, y):
         b, seq_len, pt, d = x.size()
         t = self.pos_encoding(t.view(b, 1), x.size())
-        x = x + t
+        x = x + t * self.lmd_pe
 
         y = self.emb_y(y)
 

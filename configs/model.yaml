@@ -1,11 +1,12 @@
 seq_len: 5
 stride: 1
-steps: 1
+steps: 10
 sigma: 0.0
 
 # model
 hidden_ndim: 256
 hidden_nch: 1024
+lmd_pe: 0.0001
 # nlayers: 1
 # nheads: 8
 # dropout: 0.1

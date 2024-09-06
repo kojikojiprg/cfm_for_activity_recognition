@@ -73,13 +73,13 @@ class FlowMatching(LightningModule):
         return loss
 
     @torch.no_grad()
-    def predict_step(self, batch, batch_idx):
+    def predict_step(self, batch, batch_idx, steps=None):
         x, seq_lens, labels = batch
         x = x * self.mag
         v = self.calc_verocity(x)
         b, _, pt, d = x.size()
 
-        self.steps = 100
+        self.steps = steps
 
         # sample from cfm
         results = []
@@ -94,7 +94,7 @@ class FlowMatching(LightningModule):
 
             xi = x[i, : seq_lens[i]]  # remove padding
             vi = v[i, : seq_lens[i] - 1]
-            # xit = xi[1 : self.seq_len]
+            xit = xi[1 : self.seq_len]
             vit = vi[: self.seq_len - 1]
 
             vi_preds = []
@@ -102,7 +102,7 @@ class FlowMatching(LightningModule):
             pred_len = seq_lens[i] - self.seq_len
             for t in range(pred_len):
                 # xit = xi[t + 1 : t + self.seq_len]
-                vit = vi[t : t + self.seq_len - 1]
+                # vit = vi[t : t + self.seq_len - 1]
 
                 # update vt
                 vit = vit.view(1, self.seq_len - 1, pt, d)
@@ -116,7 +116,7 @@ class FlowMatching(LightningModule):
                 # vit = torch.cat(vit_preds, dim=0)
 
                 # test plot
-                n = 25
+                n = 3
                 vit = vit.view(self.steps + 1, (self.seq_len - 1) * pt, d)
                 vit_plot = vit.detach().cpu().numpy()
                 vit_pre = vi[t : t + self.seq_len - 1].detach()
@@ -142,16 +142,16 @@ class FlowMatching(LightningModule):
                 # plt.ylim(-0.01, 0.01)
                 plt.show()
 
-                if t == 0:
+                if t == 1:
                     return []
 
-                # vit = vit[-1]
-                # vi_preds.append(vit)
+                vit = vit[-1]
+                vi_preds.append(vit)
 
                 # # update xt
-                # xit = xit.view(1, self.seq_len - 1, pt, d)
-                # xit = xit + vit.view(1, self.seq_len - 1, pt, d)
-                # xi_preds.append(xit)
+                xit = xit.view(1, self.seq_len - 1, pt, d)
+                xit = xit + vit.view(1, self.seq_len - 1, pt, d)
+                xi_preds.append(xit)
 
             vi_preds = torch.cat(vi_preds).view(pred_len, self.seq_len - 1, pt, d)
             xi_preds = torch.cat(xi_preds).view(pred_len, self.seq_len - 1, pt, d)
