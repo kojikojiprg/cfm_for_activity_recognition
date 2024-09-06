@@ -63,15 +63,11 @@ class FlowMatching(LightningModule):
         loss_cos = F.cosine_embedding_loss(at, ut, target)
 
         at = at.view(b, seq_len, pt, d)
-        at_cumsum = at.cumsum(dim=1)
-        loss_v = 0
-        for t in range(self.seq_len - 1):
-            recon_v1 = v0[:, 0] + at_cumsum[:, t]
-            loss_vt = F.mse_loss(recon_v1, v1[:, t], reduction="none")
-            loss_vt = loss_vt.sum(dim=-1).mean()
-            loss_v = loss_v + loss_vt
+        recon_v1 = v0 + at
+        loss_v = F.mse_loss(recon_v1, v1, reduction="none")
+        loss_v = loss_v.sum(dim=-1).mean()
 
-        loss = loss_a * 0.1 + loss_cos + loss_v
+        loss = loss_a + loss_cos + loss_v
         loss_dict = dict(a=loss_a, cos=loss_cos, v=loss_v, loss=loss)
         self.log_dict(loss_dict, prog_bar=True, logger=True)
         return loss
@@ -146,7 +142,7 @@ class FlowMatching(LightningModule):
                 # plt.ylim(-0.01, 0.01)
                 plt.show()
 
-                if t == 9:
+                if t == 0:
                     return []
 
                 # vit = vit[-1]

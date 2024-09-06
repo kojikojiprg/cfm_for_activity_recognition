@@ -26,16 +26,16 @@ class Down(nn.Module):
             nn.MaxPool2d((2, 1)),
         )
 
-        self.emb_layer = nn.Sequential(
-            nn.SiLU(),
+        self.emb = nn.Sequential(
             nn.Linear(hidden_ndim, out_nch),
+            nn.SiLU(),
         )
 
-    def forward(self, x, t):
+    def forward(self, x, y):
         x = self.conv(x)
         b, ch, seq_len, pt = x.size()
-        t = self.emb_layer(t).view(b, ch, 1, 1).repeat(1, 1, seq_len, pt)
-        return x + t
+        y = self.emb(y).view(b, ch, 1, 1).repeat(1, 1, seq_len, pt)
+        return x + y
 
 
 class Up(nn.Module):
@@ -45,18 +45,18 @@ class Up(nn.Module):
         self.up = nn.Upsample(size, mode="bilinear", align_corners=True)
         self.conv = Conv(in_nch, out_nch)
 
-        self.emb_layer = nn.Sequential(
-            nn.SiLU(),
+        self.emb = nn.Sequential(
             nn.Linear(hidden_ndim, out_nch),
+            nn.SiLU(),
         )
 
-    def forward(self, x, skip_x, t):
+    def forward(self, x, skip_x, y):
         x = self.up(x)
         x = torch.cat([skip_x, x], dim=1)
         x = self.conv(x)
         b, ch, seq_len, pt = x.size()
-        t = self.emb_layer(t).view(b, ch, 1, 1).repeat(1, 1, seq_len, pt)
-        return x + t
+        y = self.emb(y).view(b, ch, 1, 1).repeat(1, 1, seq_len, pt)
+        return x + y
 
 
 class UNet(nn.Module):
@@ -79,29 +79,31 @@ class UNet(nn.Module):
         self.up1 = Up(nch // 4 + nch // 2, nch // 2, size, config.hidden_ndim)
         self.conv_out = nn.Sequential(Conv(nch // 2, nch // 4), Conv(nch // 4, 1))
 
-    def pos_encoding(self, t, hidden_ndim):
-        freq = 10000 ** (torch.arange(0, hidden_ndim, 2).to(t.device) / hidden_ndim)
-        pos_enc_a = torch.sin(t.repeat(1, hidden_ndim // 2) / freq)
-        pos_enc_b = torch.cos(t.repeat(1, hidden_ndim // 2) / freq)
+    def pos_encoding(self, t, size):
+        b, seq_len, pt, d = size
+        ndim = seq_len * pt * d
+        freq = 10000 ** (torch.arange(0, ndim, 2).to(t.device) / ndim)
+        pos_enc_a = torch.sin(t.repeat(1, ndim // 2) / freq)
+        pos_enc_b = torch.cos(t.repeat(1, ndim // 2) / freq)
         pos_enc = torch.cat([pos_enc_a, pos_enc_b], dim=-1)
-        return pos_enc
+        return pos_enc.view(b, seq_len, pt, d)
 
     def forward(self, t, x, y):
         b, seq_len, pt, d = x.size()
+        t = self.pos_encoding(t.view(b, 1), x.size())
+        x = x + t
 
-        t = self.pos_encoding(t.view(b, 1), self.hidden_ndim)
         y = self.emb_y(y)
-        t = t + y
 
         x = x.view(b, 1, seq_len, pt * d)
         x1 = self.conv_in(x)
-        x2 = self.down1(x1, t)
+        x2 = self.down1(x1, y)
 
         x2 = self.bot1(x2)
         x2 = self.bot2(x2)
         x2 = self.bot3(x2)
 
-        x = self.up1(x2, x1, t)
+        x = self.up1(x2, x1, y)
         x = self.conv_out(x)
 
         return x.view(b, seq_len, pt, d)

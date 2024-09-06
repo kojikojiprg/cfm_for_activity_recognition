@@ -5,7 +5,7 @@ sigma: 0.0
 
 # model
 hidden_ndim: 256
-hidden_nch: 512
+hidden_nch: 1024
 # nlayers: 1
 # nheads: 8
 # dropout: 0.1
