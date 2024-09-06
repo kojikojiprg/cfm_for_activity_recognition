@@ -70,7 +70,7 @@ class ConditionalFlowMatching(LightningModule):
     @torch.no_grad()
     def predict_step(self, batch, batch_idx):
 
-        x, seq_lens, label = batch
+        x, seq_lens, labels = batch
         x = x * self.mag
         v = self.calc_verocity(x)
         b, _, pt, d = x.size()
@@ -78,17 +78,17 @@ class ConditionalFlowMatching(LightningModule):
         # sample from cfm
         results = []
         for i in range(x.size(0)):
-            n_ode = NeuralODE(
-                wrapper(self.net, label[i]),
-                "dopri5",
-                atol=1e-4,
-                rtol=1e-4,
-                sensitivity="adjoint",
-            )
-            # remove padding
-            xi = x[i, : seq_lens[i]]
+            # n_ode = NeuralODE(
+            #     wrapper(self.net, labels[i]),
+            #     "dopri5",
+            #     atol=1e-4,
+            #     rtol=1e-4,
+            #     sensitivity="adjoint",
+            # )
+
+            xi = x[i, : seq_lens[i]]  # remove padding
             vi = v[i, : seq_lens[i] - 1]
-            xit = xi[1 : self.seq_len]
+            # xit = xi[1 : self.seq_len]
             vit = vi[: self.seq_len - 1]
 
             vi_preds = []
@@ -100,10 +100,17 @@ class ConditionalFlowMatching(LightningModule):
 
                 # update vt
                 vit = vit.view(1, self.seq_len - 1, pt, d)
-                vit = n_ode.trajectory(vit, t_span=torch.linspace(0, 1, self.steps + 1))
+                # vit = n_ode.trajectory(vit, t_span=torch.linspace(0, 1, self.steps + 1))
+                vit_preds = [vit.detach()]
+                for dt in range(self.steps):
+                    dt = torch.full((vit.size(0),), dt / self.steps).to(self.device)
+                    ait = self.net(dt, vit, labels[i])
+                    vit = vit + ait / self.steps
+                    vit_preds.append(vit.detach())
+                vit = torch.cat(vit_preds, dim=0)
 
                 # test plot
-                n = 10
+                n = 25
                 vit = vit.view(self.steps + 1, (self.seq_len - 1) * pt, d)
                 vit_plot = vit.detach().cpu().numpy()
                 vit_pre = vi[t : t + self.seq_len - 1].detach()
@@ -111,32 +118,34 @@ class ConditionalFlowMatching(LightningModule):
                 vit_nxt = vi[t + 1 : t + self.seq_len].detach()
                 vit_nxt = vit_nxt.view((self.seq_len - 1) * pt, d).cpu().numpy()
                 vit_mdl = vit_nxt * 0.5 + vit_pre * 0.5
-                plt.scatter(vit_plot[0, :n, 0], vit_plot[0, :n, 1], s=4, c="black")
-                plt.scatter(vit_plot[:, :n, 0], vit_plot[:, :n, 1], s=1, c="olive")
-                plt.scatter(vit_plot[-1, :n, 0], vit_plot[-1, :n, 1], s=4, c="blue")
-                plt.scatter(vit_pre[:n, 0], vit_pre[:n, 1], s=2, c="lime")
-                plt.scatter(vit_nxt[:n, 0], vit_nxt[:n, 1], s=2, c="red")
-                plt.scatter(vit_mdl[:n, 0], vit_mdl[:n, 1], s=4, c="pink")
-                for i in range(0, n):
+                plt.scatter(vit_plot[0, ::n, 0], vit_plot[0, ::n, 1], s=4, c="black")
+                plt.scatter(vit_plot[:, ::n, 0], vit_plot[:, ::n, 1], s=1, c="olive")
+                plt.scatter(vit_plot[-1, ::n, 0], vit_plot[-1, ::n, 1], s=4, c="blue")
+                plt.scatter(vit_pre[::n, 0], vit_pre[::n, 1], s=2, c="lime")
+                plt.scatter(vit_nxt[::n, 0], vit_nxt[::n, 1], s=2, c="red")
+                plt.scatter(vit_mdl[::n, 0], vit_mdl[::n, 1], s=4, c="pink")
+                for j in range(0, vit_pre.shape[0], n):
                     plt.plot(
-                        [vit_pre[i, 0], vit_nxt[i, 0]],
-                        [vit_pre[i, 1], vit_nxt[i, 1]],
+                        [vit_pre[j, 0], vit_nxt[j, 0]],
+                        [vit_pre[j, 1], vit_nxt[j, 1]],
                         c="skyblue",
                         linestyle="--",
                         linewidth=1,
                     )
+                plt.xlim(-0.01, 0.01)
+                plt.ylim(-0.01, 0.01)
                 plt.show()
 
-                if t == 0:
+                if t == 9:
                     return []
 
-                vit = vit[-1]
-                vi_preds.append(vit)
+                # vit = vit[-1]
+                # vi_preds.append(vit)
 
-                # update xt
-                xit = xit.view(1, self.seq_len - 1, pt, d)
-                xit = xit + vit.view(1, self.seq_len - 1, pt, d)
-                xi_preds.append(xit)
+                # # update xt
+                # xit = xit.view(1, self.seq_len - 1, pt, d)
+                # xit = xit + vit.view(1, self.seq_len - 1, pt, d)
+                # xi_preds.append(xit)
 
             vi_preds = torch.cat(vi_preds).view(pred_len, self.seq_len - 1, pt, d)
             xi_preds = torch.cat(xi_preds).view(pred_len, self.seq_len - 1, pt, d)
