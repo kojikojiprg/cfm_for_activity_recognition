@@ -139,8 +139,8 @@ class NTU_RGBD(torch.utils.data.Dataset):
                     self.x1 += x1
                     self.labels += [label for _ in range(len(x0))]
 
-        self.x0 = self.min_max_sacaling(np.array(self.x0))
-        self.x1 = self.min_max_sacaling(np.array(self.x1))
+        # self.x0 = self.min_max_sacaling(np.array(self.x0))
+        # self.x1 = self.min_max_sacaling(np.array(self.x1))
 
     @staticmethod
     def pad_skeleton_seq(skel_seq, length=500):
@@ -163,7 +163,7 @@ class NTU_RGBD(torch.utils.data.Dataset):
                     val = self.pad_skeleton_seq(val)
                     self.x0.append(val.astype(np.float32))
 
-        self.x0 = self.min_max_sacaling(np.array(self.x0))
+        # self.x0 = self.min_max_sacaling(np.array(self.x0))
 
     def __len__(self):
         return len(self.labels)

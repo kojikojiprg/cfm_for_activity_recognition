@@ -19,11 +19,11 @@ class Conv(nn.Module):
 
 
 class Down(nn.Module):
-    def __init__(self, in_nch, out_nch, hidden_ndim):
+    def __init__(self, in_nch, out_nch, hidden_ndim, seq_len):
         super().__init__()
         self.conv = nn.Sequential(
             Conv(in_nch, out_nch),
-            nn.MaxPool2d((2, 1)),
+            nn.AvgPool2d((seq_len, 1)),
         )
 
         self.emb = nn.Sequential(
@@ -71,7 +71,7 @@ class UNet(nn.Module):
         self.emb_y = nn.Embedding(num_classes, self.hidden_ndim)
 
         self.conv_in = Conv(1, nch // 4)
-        self.down1 = Down(nch // 4, nch // 2, config.hidden_ndim)
+        self.down1 = Down(nch // 4, nch // 2, config.hidden_ndim, self.seq_len)
 
         self.bot1 = Conv(nch // 2, nch)
         self.bot2 = Conv(nch, nch)

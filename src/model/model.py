@@ -48,24 +48,30 @@ class FlowMatching(LightningModule):
         v0 = self.calc_verocity(x0)
         v1 = self.calc_verocity(x1)
 
-        t, vt, ut = self.cfm.sample_location(v0, v1)
+        t, t_exp, vt, ut = self.cfm.sample_location(v0, v1)
 
         # calc at
         at = self.net(t, vt, label)
 
         # calc loss
+        # weights = F.threshold(1 - torch.abs(ut), 0.01, 0.01)
+        weights = 1
         b, seq_len, pt, d = v0.size()
+        loss_a = F.mse_loss(at, ut, reduction="none") * weights
+        loss_a = loss_a.sum(dim=-1).mean()
+
+        recon_v1 = vt + (at * (1 - t_exp))
+        loss_v1 = F.mse_loss(recon_v1, v1, reduction="none") * weights
+        loss_v1 = loss_v1.sum(dim=-1).mean()
+        recon_v0 = vt - (at * t_exp)
+        loss_v0 = F.mse_loss(recon_v0, v0, reduction="none") * weights
+        loss_v0 = loss_v0.sum(dim=-1).mean()
+        loss_v = loss_v1 + loss_v0
+
         at = at.view(b * seq_len * pt, d)
         ut = ut.view(b * seq_len * pt, d)
-        loss_a = F.mse_loss(at, ut, reduction="none")
-        loss_a = loss_a.sum(dim=-1).mean()
         target = torch.ones((at.size(0),)).to(self.device)
         loss_cos = F.cosine_embedding_loss(at, ut, target)
-
-        at = at.view(b, seq_len, pt, d)
-        recon_v1 = v0 + at
-        loss_v = F.mse_loss(recon_v1, v1, reduction="none")
-        loss_v = loss_v.sum(dim=-1).mean()
 
         loss = loss_a + loss_cos + loss_v
         loss_dict = dict(a=loss_a, cos=loss_cos, v=loss_v, loss=loss)
@@ -116,7 +122,7 @@ class FlowMatching(LightningModule):
                 # vit = torch.cat(vit_preds, dim=0)
 
                 # test plot
-                n = 3
+                n = 25
                 vit = vit.view(self.steps + 1, (self.seq_len - 1) * pt, d)
                 vit_plot = vit.detach().cpu().numpy()
                 vit_pre = vi[t : t + self.seq_len - 1].detach()
@@ -135,6 +141,20 @@ class FlowMatching(LightningModule):
                         [vit_pre[j, 0], vit_nxt[j, 0]],
                         [vit_pre[j, 1], vit_nxt[j, 1]],
                         c="skyblue",
+                        linestyle="--",
+                        linewidth=1,
+                    )
+                plt.scatter(vit_plot[0, 1::n, 0], vit_plot[0, 1::n, 1], s=4, c="black")
+                plt.scatter(vit_plot[:, 1::n, 0], vit_plot[:, 1::n, 1], s=1, c="olive")
+                plt.scatter(vit_plot[-1, 1::n, 0], vit_plot[-1, 1::n, 1], s=4, c="blue")
+                plt.scatter(vit_pre[1::n, 0], vit_pre[1::n, 1], s=2, c="lime")
+                plt.scatter(vit_nxt[1::n, 0], vit_nxt[1::n, 1], s=2, c="red")
+                plt.scatter(vit_mdl[1::n, 0], vit_mdl[1::n, 1], s=4, c="pink")
+                for j in range(1, vit_pre.shape[0], n):
+                    plt.plot(
+                        [vit_pre[j, 0], vit_nxt[j, 0]],
+                        [vit_pre[j, 1], vit_nxt[j, 1]],
+                        c="pink",
                         linestyle="--",
                         linewidth=1,
                     )

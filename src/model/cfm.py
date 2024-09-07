@@ -36,7 +36,7 @@ class ConditionalFlowMatcher:
         vt = self.sample_vt(v0, v1, t_expand)
         ut = self.sample_ut(v0, v1, t_expand)
 
-        return t, vt, ut
+        return t, t_expand, vt, ut
 
 
 class ConsistencyFlowMatcher:
