@@ -73,6 +73,8 @@ class NTU_RGBD(torch.utils.data.Dataset):
         self.x = []
         self.seq_len_lst = []
         self.labels = []
+        self.x_min = None
+        self.x_max = None
 
         self.create()
 
@@ -130,7 +132,7 @@ class NTU_RGBD(torch.utils.data.Dataset):
         d = x.shape[-1]
         x_min = np.nanmin(x, axis=(0, 1, 2)).reshape(1, 1, 1, d)
         x_max = np.nanmax(x, axis=(0, 1, 2)).reshape(1, 1, 1, d)
-        return (x - x_min) / (x_max - x_min)
+        return (x - x_min) / (x_max - x_min), x_min, x_max
 
     def create(self):
         data_dicts = self.load()
@@ -145,7 +147,9 @@ class NTU_RGBD(torch.utils.data.Dataset):
                     val = self.pad_skeleton_seq(val)
                     self.x.append(val.astype(np.float32))
 
-        self.x = self.min_max_sacaling(np.array(self.x))
+        self.x, x_min, x_max = self.min_max_sacaling(np.array(self.x))
+        self.x_min = x_min
+        self.x_max = x_max
 
     def __len__(self):
         return len(self.labels)
@@ -154,7 +158,10 @@ class NTU_RGBD(torch.utils.data.Dataset):
         x = self.x[idx]
         seq_len = self.seq_len_lst[idx]
         label = self.labels[idx]
-        return x, seq_len, label
+        if self.is_train:
+            return x, seq_len, label
+        else:
+            return x, seq_len, label, self.x_min, self.x_max
 
 
 def _read_skeleton(file_path, save_skelxyz=True, save_rgbxy=True, save_depthxy=True):
