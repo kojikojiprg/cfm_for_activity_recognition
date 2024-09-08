@@ -112,8 +112,8 @@ class NTU_RGBD(torch.utils.data.Dataset):
 
         new_x = []
         for i in range(pt * d):
-            new_x.append(np.convolve(x[:, i], np.ones((w)), "same"))
-        x = np.concatenate(new_x, axis=0).reshape(-1, pt, d)
+            new_x.append(np.convolve(x[:, i], np.ones(w), "valid").reshape(-1, 1) / w)
+        x = np.concatenate(new_x, axis=1).reshape(-1, pt, d)
         return x[w:-w]  # remove prepend and append
 
     @staticmethod
