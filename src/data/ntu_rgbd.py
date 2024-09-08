@@ -63,23 +63,19 @@ training_ids = [
 
 
 class NTU_RGBD(torch.utils.data.Dataset):
-    def __init__(self, root, seq_len, stride, is_train, split_type="cross_subject"):
+    def __init__(self, root, seq_len, ma_w, is_train, split_type="cross_subject"):
         super().__init__()
         self.root = root
         self.seq_len = seq_len
-        self.stride = stride
+        self.ma_w = ma_w
         self.is_train = is_train
         self.split_type = split_type
 
-        self.labels = []
-        self.x0 = []
-        self.x1 = []
+        self.x = []
         self.seq_len_lst = []
+        self.labels = []
 
-        if is_train:
-            self.create_train()
-        else:
-            self.create_pred()
+        self.create()
 
     def sid_is_train(self, sid):
         if self.split_type == "cross_subject":
@@ -111,46 +107,15 @@ class NTU_RGBD(torch.utils.data.Dataset):
         return data_dicts
 
     @staticmethod
-    def min_max_sacaling(x):
-        d = x.shape[-1]
-        x_min = np.nanmin(x, axis=(0, 1, 2)).reshape(1, 1, 1, d)
-        x_max = np.nanmax(x, axis=(0, 1, 2)).reshape(1, 1, 1, d)
-        return (x - x_min) / (x_max - x_min)
-
-    @staticmethod
-    def moving_agerage(x, w=5):
+    def moving_agerage(x, w):
         seq_len, pt, d = x.shape
         x = x.reshape(seq_len, -1)
 
         new_x = []
         for i in range(pt * d):
-            new_x.append(np.convolve(x[:, i], np.ones((w)), "valid"))
-        return np.concatenate(new_x, axis=0).reshape(-1, pt, d)
-
-    def split_seq(self, val):
-        x0 = []
-        x1 = []
-        for i in range(len(val) - self.seq_len - self.stride + 1):
-            x0.append(val[i : i + self.seq_len].astype(np.float32))
-            x1.append(
-                val[i + self.stride : i + self.seq_len + self.stride].astype(np.float32)
-            )
-        return x0, x1
-
-    def create_train(self):
-        data_dicts = self.load()
-
-        for data_dict in tqdm(data_dicts, ncols=100, desc="creating"):
-            label = data_dict["label"]
-            for key, val in data_dict.items():
-                if "skel" in key:
-                    x0, x1 = self.split_seq(val)
-                    self.x0 += x0
-                    self.x1 += x1
-                    self.labels += [label for _ in range(len(x0))]
-
-        # self.x0 = self.min_max_sacaling(np.array(self.x0))
-        # self.x1 = self.min_max_sacaling(np.array(self.x1))
+            new_x.append(np.convolve(x[:, i], np.ones((w)), "same"))
+        x = np.concatenate(new_x, axis=0).reshape(-1, pt, d)
+        return x[w:-w]  # remove prepend and append
 
     @staticmethod
     def pad_skeleton_seq(skel_seq, length=500):
@@ -161,7 +126,14 @@ class NTU_RGBD(torch.utils.data.Dataset):
             constant_values=np.nan,
         )
 
-    def create_pred(self):
+    @staticmethod
+    def min_max_sacaling(x):
+        d = x.shape[-1]
+        x_min = np.nanmin(x, axis=(0, 1, 2)).reshape(1, 1, 1, d)
+        x_max = np.nanmax(x, axis=(0, 1, 2)).reshape(1, 1, 1, d)
+        return (x - x_min) / (x_max - x_min)
+
+    def create(self):
         data_dicts = self.load()
 
         for data_dict in tqdm(data_dicts, ncols=100, desc="creating"):
@@ -169,24 +141,21 @@ class NTU_RGBD(torch.utils.data.Dataset):
             for key, val in data_dict.items():
                 if "skel" in key:
                     self.labels.append(label)
+                    val = self.moving_agerage(val, self.ma_w)
                     self.seq_len_lst.append(len(val))
                     val = self.pad_skeleton_seq(val)
-                    self.x0.append(val.astype(np.float32))
+                    self.x.append(val.astype(np.float32))
 
-        # self.x0 = self.min_max_sacaling(np.array(self.x0))
+        self.x = self.min_max_sacaling(np.array(self.x))
 
     def __len__(self):
         return len(self.labels)
 
     def __getitem__(self, idx):
+        x = self.x[idx]
+        seq_len = self.seq_len_lst[idx]
         label = self.labels[idx]
-        x0 = self.x0[idx]
-        if self.is_train:
-            x1 = self.x1[idx]
-            return x0, x1, label
-        else:
-            seq_len = self.seq_len_lst[idx]
-            return x0, seq_len, label
+        return x, seq_len, label
 
 
 def _read_skeleton(file_path, save_skelxyz=True, save_rgbxy=True, save_depthxy=True):
