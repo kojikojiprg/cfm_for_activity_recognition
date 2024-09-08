@@ -54,8 +54,8 @@ class FlowMatching(LightningModule):
         at = self.net(t, vt, label)
 
         # calc loss
-        # weights = F.threshold(1 - torch.abs(ut), 0.01, 0.01)
-        weights = 1
+        weights = torch.abs(ut.detach())
+        weights[weights > 1.0] = 1.0
         b, seq_len, pt, d = v0.size()
         loss_a = F.mse_loss(at, ut, reduction="none") * weights
         loss_a = loss_a.sum(dim=-1).mean()
@@ -73,7 +73,7 @@ class FlowMatching(LightningModule):
         target = torch.ones((at.size(0),)).to(self.device)
         loss_cos = F.cosine_embedding_loss(at, ut, target)
 
-        loss = loss_a + loss_cos + loss_v
+        loss = loss_a + loss_v + loss_cos
         loss_dict = dict(a=loss_a, cos=loss_cos, v=loss_v, loss=loss)
         self.log_dict(loss_dict, prog_bar=True, logger=True)
         return loss
@@ -106,9 +106,9 @@ class FlowMatching(LightningModule):
             vi_preds = []
             xi_preds = []
             pred_len = seq_lens[i] - self.seq_len
-            for t in range(pred_len):
-                # xit = xi[t + 1 : t + self.seq_len]
-                # vit = vi[t : t + self.seq_len - 1]
+            for t in range(50, pred_len):
+                xit = xi[t + 1 : t + self.seq_len]
+                vit = vi[t : t + self.seq_len - 1]
 
                 # update vt
                 vit = vit.view(1, self.seq_len - 1, pt, d)
@@ -162,7 +162,7 @@ class FlowMatching(LightningModule):
                 # plt.ylim(-0.01, 0.01)
                 plt.show()
 
-                if t == 1:
+                if t > 55:
                     return []
 
                 vit = vit[-1]

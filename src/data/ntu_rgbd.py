@@ -117,6 +117,16 @@ class NTU_RGBD(torch.utils.data.Dataset):
         x_max = np.nanmax(x, axis=(0, 1, 2)).reshape(1, 1, 1, d)
         return (x - x_min) / (x_max - x_min)
 
+    @staticmethod
+    def moving_agerage(x, w=5):
+        seq_len, pt, d = x.shape
+        x = x.reshape(seq_len, -1)
+
+        new_x = []
+        for i in range(pt * d):
+            new_x.append(np.convolve(x[:, i], np.ones((w)), "valid"))
+        return np.concatenate(new_x, axis=0).reshape(-1, pt, d)
+
     def split_seq(self, val):
         x0 = []
         x1 = []
