@@ -47,11 +47,13 @@ class Up(nn.Module):
 class UNet(nn.Module):
     def __init__(self, config, num_classes, skel_size):
         super().__init__()
+        self.lmd_pe = config.lmd_pe
+        self.lmd_y = config.lmd_y
         nch = config.hidden_nch
 
         self.emb_y = nn.Embedding(num_classes, skel_size[0] * skel_size[1])
 
-        self.conv_in = Conv(3, nch // 8)
+        self.conv_in = Conv(1, nch // 8)
         self.down1 = Down(nch // 8, nch // 4, (9, 2))
         self.conv1 = Conv(nch // 4, nch // 4)
         self.down2 = Down(nch // 4, nch // 2, (7, 1))
@@ -80,17 +82,18 @@ class UNet(nn.Module):
             pos_enc_a = torch.sin(t.repeat(1, ndim // 2 + 1) / freq)
             pos_enc_b = torch.cos(t.repeat(1, ndim // 2) / freq[:-1])
         pos_enc = torch.cat([pos_enc_a, pos_enc_b], dim=-1)
-        return pos_enc.view(b, 1, pt, d)
+        return pos_enc
 
     def forward(self, t, x, y):
         b, pt, d = x.size()
         t = self.pos_encoding(t.view(b, 1), x.size())
+        t = t.view(b, 1, pt, d) * self.lmd_pe
 
-        y = self.emb_y(y).view(b, 1, pt, d)
+        y = self.emb_y(y)
+        y = y.view(b, 1, pt, d) * self.lmd_y
 
-        # concat latent features
         x = x.view(b, 1, pt, d)
-        x = torch.cat([x, t, y], dim=1)
+        x = x + y + t
 
         x1 = self.conv_in(x)
         x2 = self.down1(x1)

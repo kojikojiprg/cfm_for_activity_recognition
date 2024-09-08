@@ -29,21 +29,24 @@ class ConditionalFlowMatcher:
         v0 = []
         v1 = []
         t = []
+        dt = []
         for i in range(len(seq_lens)):
             ti = torch.randint(seq_lens[i] - 2, (1,))
-            dt = torch.randint(self.steps, (1,)) / self.steps
-            t.append(ti + dt)
+            dti = torch.randint(self.steps, (1,)) / self.steps
+            t.append(ti + dti)
+            dt.append(dti)
             v0.append(v[i, ti].view(1, pt, d))
             v1.append(v[i, ti + 1].view(1, pt, d))
         t = torch.cat(t).to(v.device)
+        dt = torch.cat(dt).to(v.device)
         v0 = torch.cat(v0, dim=0)
         v1 = torch.cat(v1, dim=0)
 
-        t_expand = t.view(b, 1, 1).repeat(1, pt, d)
-        vt = self.sample_vt(v0, v1, t_expand)
+        dt_expand = dt.view(b, 1, 1).repeat(1, pt, d)
+        vt = self.sample_vt(v0, v1, dt_expand)
         ut = self.sample_ut(v0, v1)
 
-        return t, vt, ut
+        return t, vt, ut, dt_expand, v0, v1
 
 
 class ConsistencyFlowMatcher:

@@ -46,16 +46,23 @@ class FlowMatching(LightningModule):
 
         v = self.calc_verocity(x)
 
-        t, vt, ut = self.cfm.sample_location(v, seq_lens)
+        t, vt, ut, dt, v0, v1 = self.cfm.sample_location(v, seq_lens)
 
         # calc at
         at = self.net(t, vt, labels)
 
         # calc loss
-        loss = F.mse_loss(at, ut, reduction="none")
-        loss = loss.sum(dim=-1).mean()
+        loss_a = F.mse_loss(at, ut, reduction="none")
+        loss_a = loss_a.sum(dim=-1).mean()
 
-        loss_dict = dict(a=loss)
+        loss_v0 = F.mse_loss(vt - at * dt, v0, reduction="none")
+        loss_v0 = loss_v0.sum(dim=-1).mean()
+        loss_v1 = F.mse_loss(vt + at * (1 - dt), v1, reduction="none")
+        loss_v1 = loss_v1.sum(dim=-1).mean()
+        loss_v = loss_v0 + loss_v1
+
+        loss = loss_a + loss_v
+        loss_dict = dict(a=loss_a, v=loss_v, loss=loss)
         self.log_dict(loss_dict, prog_bar=True, logger=True)
         return loss
 
@@ -68,19 +75,20 @@ class FlowMatching(LightningModule):
 
         self.steps = steps
 
-        # sample from cfm
         results = []
-        for i in range(x.size(0)):
+        for i in range(b):
             n_ode = NeuralODE(
                 wrapper(self.net, labels[i]),
                 "dopri5",
-                atol=1e-4,
-                rtol=1e-4,
+                atol=1e-8,
+                rtol=1e-8,
                 sensitivity="adjoint",
             )
 
             xi = x[i, : seq_lens[i]]  # remove padding
-            vi = v[i, : seq_lens[i] - 1]
+            xit = xi[1]
+            vi = v[i, : seq_lens[i] - 1]  # remove padding
+            vit = vi[0]
 
             vi_preds = []
             xi_preds = []
@@ -91,14 +99,9 @@ class FlowMatching(LightningModule):
 
                 # update vt
                 vit = vit.view(1, pt, d)
-                vit = n_ode.trajectory(vit, t_span=torch.linspace(t, t + 1, self.steps + 1))
-                # vit_preds = [vit.detach()]
-                # for dt in range(self.steps):
-                #     dt = torch.full((vit.size(0),), dt / self.steps).to(self.device)
-                #     ait = self.net(dt, vit, labels[i])
-                #     vit = vit + ait / self.steps
-                #     vit_preds.append(vit.detach())
-                # vit = torch.cat(vit_preds, dim=0)
+                vit = n_ode.trajectory(
+                    vit, t_span=torch.linspace(t, t + 1, self.steps + 1)
+                )
 
                 # test plot
                 vit = vit.view(self.steps + 1, pt, d)
@@ -108,12 +111,12 @@ class FlowMatching(LightningModule):
                 vit_nxt = vi[t + 1].detach()
                 vit_nxt = vit_nxt.view(pt, d).cpu().numpy()
                 vit_mdl = vit_nxt * 0.5 + vit_pre * 0.5
-                plt.scatter(vit_pre[:, 0], vit_pre[:, 1], s=2, c="lime")
-                plt.scatter(vit_nxt[:, 0], vit_nxt[:, 1], s=2, c="red")
+                plt.scatter(vit_pre[:, 0], vit_pre[:, 1], s=4, c="lime")
+                plt.scatter(vit_nxt[:, 0], vit_nxt[:, 1], s=4, c="red")
                 plt.scatter(vit_mdl[:, 0], vit_mdl[:, 1], s=4, c="pink")
-                plt.scatter(vit_plot[0, :, 0], vit_plot[0, :, 1], s=4, c="black")
+                plt.scatter(vit_plot[0, :, 0], vit_plot[0, :, 1], s=2, c="black")
                 plt.scatter(vit_plot[:, :, 0], vit_plot[:, :, 1], s=1, c="olive")
-                plt.scatter(vit_plot[-1, :, 0], vit_plot[-1, :, 1], s=4, c="blue")
+                plt.scatter(vit_plot[-1, :, 0], vit_plot[-1, :, 1], s=2, c="blue")
                 for j in range(0, vit_pre.shape[0]):
                     plt.plot(
                         [vit_pre[j, 0], vit_nxt[j, 0]],
