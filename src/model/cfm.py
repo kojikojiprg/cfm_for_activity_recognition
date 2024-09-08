@@ -26,10 +26,10 @@ class ConditionalFlowMatcher:
     def sample_location(self, v, seq_lens):
         # v (b, seq_len - 1, pt, d)
         b, _, pt, d = v.size()
-        v0 = []
-        v1 = []
         t = []
         dt = []
+        v0 = []
+        v1 = []
         for i in range(len(seq_lens)):
             ti = torch.randint(seq_lens[i] - 2, (1,))
             dti = torch.randint(self.steps, (1,)) / self.steps

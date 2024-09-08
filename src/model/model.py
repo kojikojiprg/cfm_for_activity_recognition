@@ -61,16 +61,20 @@ class FlowMatching(LightningModule):
         loss_v1 = loss_v1.sum(dim=-1).mean()
         loss_v = loss_v0 + loss_v1
 
-        loss = loss_a + loss_v
+        # b, pt, d = at.size()
+        # at = at.view(b * pt, d)
+        # ut = ut.view(b * pt, d)
+        # target = torch.ones((at.size(0),)).to(self.device)
+        # loss_cos = F.cosine_embedding_loss(at, ut, target)
+
+        loss = loss_a + loss_v  # + loss_cos
         loss_dict = dict(a=loss_a, v=loss_v, loss=loss)
         self.log_dict(loss_dict, prog_bar=True, logger=True)
         return loss
 
     @torch.no_grad()
     def predict_step(self, batch, batch_idx, steps=None):
-        x, seq_lens, labels, x_min, x_max = batch
-        x_min = x_min.cpu().numpy().reshape(x_min.size(-1))
-        x_max = x_max.cpu().numpy().reshape(x_max.size(-1))
+        x, seq_lens, labels = batch
         x = x * self.mag
         v = self.calc_verocity(x)
         b, _, pt, d = x.size()
@@ -121,16 +125,11 @@ class FlowMatching(LightningModule):
             vi_preds = torch.cat(vi_preds).view(pred_len, pt, d)
             xi_preds = torch.cat(xi_preds).view(pred_len, pt, d)
 
-            # unscaling
-            xi_true = xi.detach().cpu().numpy()
-            xi_preds = xi_preds.detach().cpu().numpy()
-            xi_true = xi_true * (x_max - x_min) + x_min
-            xi_preds = xi_preds * (x_max - x_min) + x_min
             results.append(
                 {
-                    "x_true": xi_true,
+                    "x_true": xi.detach().cpu().numpy(),
                     "v_true": vi.detach().cpu().numpy(),
-                    "x_pred": xi_preds,
+                    "x_pred": xi_preds.detach().cpu().numpy(),
                     "v_pred": vi_preds.detach().cpu().numpy(),
                 }
             )
@@ -149,8 +148,8 @@ class wrapper(nn.Module):
 
 
 def plot_traj(vit, vi, t):
+    # true
     pt, d = vit.shape[-2:]
-    vit_plot = vit.detach().cpu().numpy()
     vit_pre = vi[t].detach()
     vit_pre = vit_pre.view(pt, d).cpu().numpy()
     vit_nxt = vi[t + 1].detach()
@@ -159,9 +158,6 @@ def plot_traj(vit, vi, t):
     plt.scatter(vit_pre[:, 0], vit_pre[:, 1], s=4, c="lime")
     plt.scatter(vit_nxt[:, 0], vit_nxt[:, 1], s=4, c="red")
     plt.scatter(vit_mdl[:, 0], vit_mdl[:, 1], s=4, c="pink")
-    plt.scatter(vit_plot[0, :, 0], vit_plot[0, :, 1], s=2, c="black")
-    plt.scatter(vit_plot[:, :, 0], vit_plot[:, :, 1], s=1, c="olive")
-    plt.scatter(vit_plot[-1, :, 0], vit_plot[-1, :, 1], s=2, c="blue")
     for j in range(0, vit_pre.shape[0]):
         plt.plot(
             [vit_pre[j, 0], vit_nxt[j, 0]],
@@ -170,6 +166,13 @@ def plot_traj(vit, vi, t):
             linestyle="--",
             linewidth=1,
         )
+
+    # pred result
+    vit_plot = vit.detach().cpu().numpy()
+    plt.scatter(vit_plot[0, :, 0], vit_plot[0, :, 1], s=2, c="black")
+    plt.scatter(vit_plot[:, :, 0], vit_plot[:, :, 1], s=1, c="olive")
+    plt.scatter(vit_plot[-1, :, 0], vit_plot[-1, :, 1], s=2, c="blue")
+
     # plt.xlim(-0.01, 0.01)
     # plt.ylim(-0.01, 0.01)
     plt.show()
