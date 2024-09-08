@@ -19,92 +19,95 @@ class Conv(nn.Module):
 
 
 class Down(nn.Module):
-    def __init__(self, in_nch, out_nch, hidden_ndim, seq_len):
+    def __init__(self, in_nch, out_nch, kernel_size):
         super().__init__()
         self.conv = nn.Sequential(
             Conv(in_nch, out_nch),
-            nn.AvgPool2d((seq_len, 1)),
+            nn.AvgPool2d(kernel_size, stride=1),
         )
 
-        self.emb = nn.Sequential(
-            nn.Linear(hidden_ndim, out_nch),
-            nn.SiLU(),
-        )
-
-    def forward(self, x, y):
+    def forward(self, x):
         x = self.conv(x)
-        b, ch, seq_len, pt = x.size()
-        y = self.emb(y).view(b, ch, 1, 1).repeat(1, 1, seq_len, pt)
-        return x + y
+        return x
 
 
 class Up(nn.Module):
-    def __init__(self, in_nch, out_nch, size, hidden_ndim):
+    def __init__(self, in_nch, out_nch, kernel_size):
         super().__init__()
-
-        self.up = nn.Upsample(size, mode="bilinear", align_corners=True)
+        self.convtrans = nn.ConvTranspose2d(in_nch // 2, in_nch // 2, kernel_size)
         self.conv = Conv(in_nch, out_nch)
 
-        self.emb = nn.Sequential(
-            nn.Linear(hidden_ndim, out_nch),
-            nn.SiLU(),
-        )
-
-    def forward(self, x, skip_x, y):
-        x = self.up(x)
+    def forward(self, x, skip_x):
+        x = self.convtrans(x)
         x = torch.cat([skip_x, x], dim=1)
         x = self.conv(x)
-        b, ch, seq_len, pt = x.size()
-        y = self.emb(y).view(b, ch, 1, 1).repeat(1, 1, seq_len, pt)
-        return x + y
+        return x
 
 
 class UNet(nn.Module):
     def __init__(self, config, num_classes, skel_size):
         super().__init__()
-        self.seq_len = config.seq_len - 1
-        self.hidden_ndim = config.hidden_ndim
-        self.lmd_pe = config.lmd_pe
         nch = config.hidden_nch
-        size = (self.seq_len, skel_size[0] * skel_size[1])
 
-        self.emb_y = nn.Embedding(num_classes, self.hidden_ndim)
+        self.emb_y = nn.Embedding(num_classes, skel_size[0] * skel_size[1])
 
-        self.conv_in = Conv(1, nch // 4)
-        self.down1 = Down(nch // 4, nch // 2, config.hidden_ndim, self.seq_len)
+        self.conv_in = Conv(3, nch // 8)
+        self.down1 = Down(nch // 8, nch // 4, (9, 2))
+        self.conv1 = Conv(nch // 4, nch // 4)
+        self.down2 = Down(nch // 4, nch // 2, (7, 1))
+        self.conv2 = Conv(nch // 2, nch // 2)
+        self.down3 = Down(nch // 2, nch // 2, (5, 1))
 
         self.bot1 = Conv(nch // 2, nch)
         self.bot2 = Conv(nch, nch)
         self.bot3 = Conv(nch, nch // 2)
 
-        self.up1 = Up(nch // 4 + nch // 2, nch // 2, size, config.hidden_ndim)
-        self.conv_out = nn.Sequential(Conv(nch // 2, nch // 4), Conv(nch // 4, 1))
+        self.up4 = Up(nch, nch // 4, (5, 1))
+        self.conv4 = Conv(nch // 4, nch // 4)
+        self.up5 = Up(nch // 2, nch // 8, (7, 1))
+        self.conv5 = Conv(nch // 8, nch // 8)
+        self.up6 = Up(nch // 4, nch // 8, (9, 2))
+        self.conv_out = Conv(nch // 8, 1)
 
     def pos_encoding(self, t, size):
-        b, seq_len, pt, d = size
-        ndim = seq_len * pt * d
+        b, pt, d = size
+        ndim = pt * d
         freq = 10000 ** (torch.arange(0, ndim, 2).to(t.device) / ndim)
-        pos_enc_a = torch.sin(t.repeat(1, ndim // 2) / freq)
-        pos_enc_b = torch.cos(t.repeat(1, ndim // 2) / freq)
+        if ndim % 2 == 0:
+            pos_enc_a = torch.sin(t.repeat(1, ndim // 2) / freq)
+            pos_enc_b = torch.cos(t.repeat(1, ndim // 2) / freq)
+        else:
+            pos_enc_a = torch.sin(t.repeat(1, ndim // 2 + 1) / freq)
+            pos_enc_b = torch.cos(t.repeat(1, ndim // 2) / freq[:-1])
         pos_enc = torch.cat([pos_enc_a, pos_enc_b], dim=-1)
-        return pos_enc.view(b, seq_len, pt, d)
+        return pos_enc.view(b, 1, pt, d)
 
     def forward(self, t, x, y):
-        b, seq_len, pt, d = x.size()
+        b, pt, d = x.size()
         t = self.pos_encoding(t.view(b, 1), x.size())
-        x = x + t * self.lmd_pe
 
-        y = self.emb_y(y)
+        y = self.emb_y(y).view(b, 1, pt, d)
 
-        x = x.view(b, 1, seq_len, pt * d)
+        # concat latent features
+        x = x.view(b, 1, pt, d)
+        x = torch.cat([x, t, y], dim=1)
+
         x1 = self.conv_in(x)
-        x2 = self.down1(x1, y)
+        x2 = self.down1(x1)
+        x2 = self.conv1(x2)
+        x3 = self.down2(x2)
+        x3 = self.conv2(x3)
+        x4 = self.down3(x3)
 
-        x2 = self.bot1(x2)
-        x2 = self.bot2(x2)
-        x2 = self.bot3(x2)
+        x4 = self.bot1(x4)
+        x4 = self.bot2(x4)
+        x4 = self.bot3(x4)
 
-        x = self.up1(x2, x1, y)
+        x = self.up4(x4, x3)
+        x = self.conv4(x)
+        x = self.up5(x, x2)
+        x = self.conv5(x)
+        x = self.up6(x, x1)
         x = self.conv_out(x)
 
-        return x.view(b, seq_len, pt, d)
+        return x.view(b, pt, d)

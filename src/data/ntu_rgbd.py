@@ -63,11 +63,10 @@ training_ids = [
 
 
 class NTU_RGBD(torch.utils.data.Dataset):
-    def __init__(self, root, seq_len, ma_w, is_train, split_type="cross_subject"):
+    def __init__(self, root, config, is_train, split_type="cross_subject"):
         super().__init__()
         self.root = root
-        self.seq_len = seq_len
-        self.ma_w = ma_w
+        self.ma_w = config.ma_w
         self.is_train = is_train
         self.split_type = split_type
 

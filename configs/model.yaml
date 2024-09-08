@@ -1,12 +1,13 @@
-seq_len: 3
-stride: 1
-steps: 1
-sigma: 0.001
+# seq_len: 3
+# stride: 1
+steps: 100
+sigma: 0.0
+ma_w: 5
 
 # model
-hidden_ndim: 128
+# hidden_ndim: 128
 hidden_nch: 512
-lmd_pe: 0.001
+# lmd_pe: 0.001
 # nlayers: 1
 # nheads: 8
 # dropout: 0.1
@@ -14,9 +15,9 @@ lmd_pe: 0.001
 # optim
 lr: 0.001
 lr_min: 0.00001
-t_max: 30
+t_max: 60
 
 # training
-epochs: 150
-batch_size: 512
+epochs: 300
+batch_size: 32
 num_workers: 8

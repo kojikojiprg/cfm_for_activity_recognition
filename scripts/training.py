@@ -51,7 +51,7 @@ if __name__ == "__main__":
         shutil.copyfile(config_path, copy_config_path)
 
     # model checkpoint callback
-    filename = f"cfm-seq_len{config.seq_len}-sig{config.sigma}"
+    filename = "cfm"
     model_checkpoint = ModelCheckpoint(
         checkpoint_dir,
         filename=filename + "-best-{epoch}",
@@ -63,7 +63,7 @@ if __name__ == "__main__":
 
     # load dataset
     dataset = NTU_RGBD(
-        data_root, config.seq_len, config.stride, True, split_type="cross_subject"
+        data_root, config, True, split_type="cross_subject"
     )
     dataloader = DataLoader(
         dataset,

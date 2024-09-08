@@ -13,9 +13,9 @@ class FlowMatching(LightningModule):
     def __init__(self, config, n_clusters=120, skel_size=(25, 3), mag=1):
         super().__init__()
         self.config = config
-        self.seq_len = config.seq_len
-        self.steps = config.steps
-        self.sigma = config.sigma
+        # self.seq_len = config.seq_len
+        # self.steps = config.steps
+        # self.sigma = config.sigma
         self.n_clusters = n_clusters
         self.skel_size = skel_size
         self.mag = mag
@@ -41,40 +41,21 @@ class FlowMatching(LightningModule):
         return v
 
     def training_step(self, batch, batch_idx):
-        x0, x1, label = batch
-        x0 = x0 * self.mag
-        x1 = x1 * self.mag
+        x, seq_lens, labels = batch
+        x = x * self.mag
 
-        v0 = self.calc_verocity(x0)
-        v1 = self.calc_verocity(x1)
+        v = self.calc_verocity(x)
 
-        t, t_exp, vt, ut = self.cfm.sample_location(v0, v1)
+        t, vt, ut = self.cfm.sample_location(v, seq_lens)
 
         # calc at
-        at = self.net(t, vt, label)
+        at = self.net(t, vt, labels)
 
         # calc loss
-        weights = torch.abs(ut.detach())
-        weights[weights > 1.0] = 1.0
-        b, seq_len, pt, d = v0.size()
-        loss_a = F.mse_loss(at, ut, reduction="none") * weights
-        loss_a = loss_a.sum(dim=-1).mean()
+        loss = F.mse_loss(at, ut, reduction="none")
+        loss = loss.sum(dim=-1).mean()
 
-        recon_v1 = vt + (at * (1 - t_exp))
-        loss_v1 = F.mse_loss(recon_v1, v1, reduction="none") * weights
-        loss_v1 = loss_v1.sum(dim=-1).mean()
-        recon_v0 = vt - (at * t_exp)
-        loss_v0 = F.mse_loss(recon_v0, v0, reduction="none") * weights
-        loss_v0 = loss_v0.sum(dim=-1).mean()
-        loss_v = loss_v1 + loss_v0
-
-        at = at.view(b * seq_len * pt, d)
-        ut = ut.view(b * seq_len * pt, d)
-        target = torch.ones((at.size(0),)).to(self.device)
-        loss_cos = F.cosine_embedding_loss(at, ut, target)
-
-        loss = loss_a + loss_v + loss_cos
-        loss_dict = dict(a=loss_a, cos=loss_cos, v=loss_v, loss=loss)
+        loss_dict = dict(a=loss)
         self.log_dict(loss_dict, prog_bar=True, logger=True)
         return loss
 
@@ -100,19 +81,17 @@ class FlowMatching(LightningModule):
 
             xi = x[i, : seq_lens[i]]  # remove padding
             vi = v[i, : seq_lens[i] - 1]
-            xit = xi[1 : self.seq_len]
-            vit = vi[: self.seq_len - 1]
 
             vi_preds = []
             xi_preds = []
-            pred_len = seq_lens[i] - self.seq_len
-            for t in range(50, pred_len):
-                xit = xi[t + 1 : t + self.seq_len]
-                vit = vi[t : t + self.seq_len - 1]
+            pred_len = seq_lens[i] - 3
+            for t in range(pred_len):
+                xit = xi[t + 1]
+                vit = vi[t]
 
                 # update vt
-                vit = vit.view(1, self.seq_len - 1, pt, d)
-                vit = n_ode.trajectory(vit, t_span=torch.linspace(0, 1, self.steps + 1))
+                vit = vit.view(1, pt, d)
+                vit = n_ode.trajectory(vit, t_span=torch.linspace(t, t + 1, self.steps + 1))
                 # vit_preds = [vit.detach()]
                 # for dt in range(self.steps):
                 #     dt = torch.full((vit.size(0),), dt / self.steps).to(self.device)
@@ -122,21 +101,20 @@ class FlowMatching(LightningModule):
                 # vit = torch.cat(vit_preds, dim=0)
 
                 # test plot
-                n = 25
-                vit = vit.view(self.steps + 1, (self.seq_len - 1) * pt, d)
+                vit = vit.view(self.steps + 1, pt, d)
                 vit_plot = vit.detach().cpu().numpy()
-                vit_pre = vi[t : t + self.seq_len - 1].detach()
-                vit_pre = vit_pre.view((self.seq_len - 1) * pt, d).cpu().numpy()
-                vit_nxt = vi[t + 1 : t + self.seq_len].detach()
-                vit_nxt = vit_nxt.view((self.seq_len - 1) * pt, d).cpu().numpy()
+                vit_pre = vi[t].detach()
+                vit_pre = vit_pre.view(pt, d).cpu().numpy()
+                vit_nxt = vi[t + 1].detach()
+                vit_nxt = vit_nxt.view(pt, d).cpu().numpy()
                 vit_mdl = vit_nxt * 0.5 + vit_pre * 0.5
-                plt.scatter(vit_plot[0, ::n, 0], vit_plot[0, ::n, 1], s=4, c="black")
-                plt.scatter(vit_plot[:, ::n, 0], vit_plot[:, ::n, 1], s=1, c="olive")
-                plt.scatter(vit_plot[-1, ::n, 0], vit_plot[-1, ::n, 1], s=4, c="blue")
-                plt.scatter(vit_pre[::n, 0], vit_pre[::n, 1], s=2, c="lime")
-                plt.scatter(vit_nxt[::n, 0], vit_nxt[::n, 1], s=2, c="red")
-                plt.scatter(vit_mdl[::n, 0], vit_mdl[::n, 1], s=4, c="pink")
-                for j in range(0, vit_pre.shape[0], n):
+                plt.scatter(vit_pre[:, 0], vit_pre[:, 1], s=2, c="lime")
+                plt.scatter(vit_nxt[:, 0], vit_nxt[:, 1], s=2, c="red")
+                plt.scatter(vit_mdl[:, 0], vit_mdl[:, 1], s=4, c="pink")
+                plt.scatter(vit_plot[0, :, 0], vit_plot[0, :, 1], s=4, c="black")
+                plt.scatter(vit_plot[:, :, 0], vit_plot[:, :, 1], s=1, c="olive")
+                plt.scatter(vit_plot[-1, :, 0], vit_plot[-1, :, 1], s=4, c="blue")
+                for j in range(0, vit_pre.shape[0]):
                     plt.plot(
                         [vit_pre[j, 0], vit_nxt[j, 0]],
                         [vit_pre[j, 1], vit_nxt[j, 1]],
@@ -144,37 +122,20 @@ class FlowMatching(LightningModule):
                         linestyle="--",
                         linewidth=1,
                     )
-                plt.scatter(vit_plot[0, 1::n, 0], vit_plot[0, 1::n, 1], s=4, c="black")
-                plt.scatter(vit_plot[:, 1::n, 0], vit_plot[:, 1::n, 1], s=1, c="olive")
-                plt.scatter(vit_plot[-1, 1::n, 0], vit_plot[-1, 1::n, 1], s=4, c="blue")
-                plt.scatter(vit_pre[1::n, 0], vit_pre[1::n, 1], s=2, c="lime")
-                plt.scatter(vit_nxt[1::n, 0], vit_nxt[1::n, 1], s=2, c="red")
-                plt.scatter(vit_mdl[1::n, 0], vit_mdl[1::n, 1], s=4, c="pink")
-                for j in range(1, vit_pre.shape[0], n):
-                    plt.plot(
-                        [vit_pre[j, 0], vit_nxt[j, 0]],
-                        [vit_pre[j, 1], vit_nxt[j, 1]],
-                        c="pink",
-                        linestyle="--",
-                        linewidth=1,
-                    )
                 # plt.xlim(-0.01, 0.01)
                 # plt.ylim(-0.01, 0.01)
                 plt.show()
-
-                if t > 55:
-                    return []
 
                 vit = vit[-1]
                 vi_preds.append(vit)
 
                 # # update xt
-                xit = xit.view(1, self.seq_len - 1, pt, d)
-                xit = xit + vit.view(1, self.seq_len - 1, pt, d)
+                xit = xit.view(1, pt, d)
+                xit = xit + vit.view(1, pt, d)
                 xi_preds.append(xit)
 
-            vi_preds = torch.cat(vi_preds).view(pred_len, self.seq_len - 1, pt, d)
-            xi_preds = torch.cat(xi_preds).view(pred_len, self.seq_len - 1, pt, d)
+            vi_preds = torch.cat(vi_preds).view(pred_len, pt, d)
+            xi_preds = torch.cat(xi_preds).view(pred_len, pt, d)
             results.append(
                 {
                     "x_true": xi.detach().cpu().numpy(),

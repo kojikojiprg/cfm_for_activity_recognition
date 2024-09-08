@@ -4,7 +4,7 @@ import torch.utils
 
 class ConditionalFlowMatcher:
     def __init__(self, config):
-        self.seq_len = config.seq_len
+        # self.seq_len = config.seq_len
         self.steps = config.steps
         self.sigma = config.sigma
 
@@ -20,23 +20,30 @@ class ConditionalFlowMatcher:
         eps = torch.randn_like(mu_t)
         return mu_t + sigma_t * eps
 
-    def sample_ut(self, v0, v1, t):
+    def sample_ut(self, v0, v1):
         return v1 - v0
 
-    def sample_location(self, v0, v1):
+    def sample_location(self, v, seq_lens):
         # v (b, seq_len - 1, pt, d)
-        if self.steps > 1:
-            t = torch.randint(self.steps + 1, (v0.size(0),)) / self.steps
-        else:
-            t = torch.zeros((v0.size(0),))
-        t = t.to(v0.device)
-        b, seq_len, pt, d = v0.size()
-        t_expand = t.view(b, 1, 1, 1).repeat(1, seq_len, pt, d)
+        b, _, pt, d = v.size()
+        v0 = []
+        v1 = []
+        t = []
+        for i in range(len(seq_lens)):
+            ti = torch.randint(seq_lens[i] - 2, (1,))
+            dt = torch.randint(self.steps, (1,)) / self.steps
+            t.append(ti + dt)
+            v0.append(v[i, ti].view(1, pt, d))
+            v1.append(v[i, ti + 1].view(1, pt, d))
+        t = torch.cat(t).to(v.device)
+        v0 = torch.cat(v0, dim=0)
+        v1 = torch.cat(v1, dim=0)
 
+        t_expand = t.view(b, 1, 1).repeat(1, pt, d)
         vt = self.sample_vt(v0, v1, t_expand)
-        ut = self.sample_ut(v0, v1, t_expand)
+        ut = self.sample_ut(v0, v1)
 
-        return t, t_expand, vt, ut
+        return t, vt, ut
 
 
 class ConsistencyFlowMatcher:
