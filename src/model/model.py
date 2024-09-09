@@ -21,15 +21,20 @@ class FlowMatching(LightningModule):
         self.mag = mag
         self.cfm = None
         self.net = None
+        self.net_w = None
 
     def configure_model(self):
         if self.cfm is None:
             self.cfm = ConditionalFlowMatcher(self.config)
         if self.net is None:
             self.net = UNet(self.config, self.n_clusters, self.skel_size)
+        if self.net_w is None:
+            self.net_w = UNet(self.config, self.n_clusters, self.skel_size)
 
     def configure_optimizers(self):
-        opt = torch.optim.Adam(self.net.parameters(), self.config.lr)
+        opt = torch.optim.Adam(
+            list(self.net.parameters()) + list(self.net_w.parameters()), self.config.lr
+        )
         sch = torch.optim.lr_scheduler.CosineAnnealingLR(
             opt, self.config.t_max, self.config.lr_min
         )
@@ -48,16 +53,20 @@ class FlowMatching(LightningModule):
 
         t, vt, ut, dt, v0, v1 = self.cfm.sample_location(v, seq_lens)
 
-        # calc at
+        weigt_logits = self.net_w(t, vt, labels)
+        weights = F.sigmoid(weigt_logits)
         at = self.net(t, vt, labels)
 
-        # calc loss
-        loss_a = F.mse_loss(at, ut, reduction="none")
+        weights_true = torch.ones_like(weights)
+        weights_true[torch.abs(ut.detach()) < 0.01] = 0.0
+        loss_w = F.binary_cross_entropy_with_logits(weigt_logits, weights_true)
+
+        loss_a = F.mse_loss(at, ut, reduction="none") * weights
         loss_a = loss_a.sum(dim=-1).mean()
 
-        loss_v0 = F.mse_loss(vt - at * dt, v0, reduction="none")
+        loss_v0 = F.mse_loss(vt - at * dt, v0, reduction="none") * weights
         loss_v0 = loss_v0.sum(dim=-1).mean()
-        loss_v1 = F.mse_loss(vt + at * (1 - dt), v1, reduction="none")
+        loss_v1 = F.mse_loss(vt + at * (1 - dt), v1, reduction="none") * weights
         loss_v1 = loss_v1.sum(dim=-1).mean()
         loss_v = loss_v0 + loss_v1
 
@@ -67,8 +76,8 @@ class FlowMatching(LightningModule):
         # target = torch.ones((at.size(0),)).to(self.device)
         # loss_cos = F.cosine_embedding_loss(at, ut, target)
 
-        loss = loss_a + loss_v  # + loss_cos
-        loss_dict = dict(a=loss_a, v=loss_v, loss=loss)
+        loss = loss_a + loss_v + loss_w  # + loss_cos
+        loss_dict = dict(a=loss_a, v=loss_v, w=loss_w, loss=loss)
         self.log_dict(loss_dict, prog_bar=True, logger=True)
         return loss
 
@@ -138,13 +147,15 @@ class FlowMatching(LightningModule):
 
 
 class wrapper(nn.Module):
-    def __init__(self, model, label):
+    def __init__(self, net, net_w, label):
         super().__init__()
-        self.model = model
+        self.net = net
+        self.net_w = net_w
         self.label = label
 
     def forward(self, t, x, *args, **kwargs):
-        return self.model(t, x, self.label)
+        weights = F.sigmoid(self.net_w(t, x, self.label))
+        return self.net(t, x, self.label) * weights
 
 
 def plot_traj(vit, vi, t):

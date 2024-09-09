@@ -97,7 +97,8 @@ class NTU_RGBD(torch.utils.data.Dataset):
                 continue
 
             label = int(file_name[-3:])
-            if label not in [1, 24, 27]:  # drink water, kicking something, jump up
+            # if label not in list(range(1, 31)):
+            if label not in [1, 24, 27]:
                 continue
 
             data_dict = _read_skeleton(path)
@@ -116,8 +117,14 @@ class NTU_RGBD(torch.utils.data.Dataset):
         x = np.concatenate(new_x, axis=1).reshape(-1, pt, d)
         return x[w:-w]  # remove prepend and append
 
+    # @staticmethod
+    # def cleansing(x, v_min):
+    #     seq_len, pt, d = x.shape
+    #     v = np.diff(x, axis=0)
+    #     mask = np.all(v < v_min, axis=2)
+
     @staticmethod
-    def pad_skeleton_seq(skel_seq, length=500):
+    def pad_skeleton_seq(skel_seq, length=300):
         return np.pad(
             skel_seq,
             ((0, length - len(skel_seq)), (0, 0), (0, 0)),

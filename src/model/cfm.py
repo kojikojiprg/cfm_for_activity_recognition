@@ -16,9 +16,9 @@ class ConditionalFlowMatcher:
 
     def sample_vt(self, v0, v1, t):
         mu_t = self.mu_t(v0, v1, t)
-        sigma_t = self.sigma_t(t)
-        eps = torch.randn_like(mu_t)
-        return mu_t + sigma_t * eps
+        # sigma_t = self.sigma_t(t)
+        # eps = torch.randn_like(mu_t)
+        return mu_t
 
     def sample_ut(self, v0, v1):
         return v1 - v0
@@ -32,7 +32,8 @@ class ConditionalFlowMatcher:
         v1 = []
         for i in range(len(seq_lens)):
             ti = torch.randint(seq_lens[i] - 2, (1,))
-            dti = torch.randint(self.steps, (1,)) / self.steps
+            # dti = torch.randint(self.steps, (1,)) / self.steps
+            dti = torch.randint(2, (1,)) * self.sigma
             t.append(ti + dti)
             dt.append(dti)
             v0.append(v[i, ti].view(1, pt, d))
