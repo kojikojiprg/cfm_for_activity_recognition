@@ -18,11 +18,14 @@ from src.utils import yaml_handler
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("dataset_root", type=str)
-    # parser.add_argument("dataset_type", type=str)
+    parser.add_argument("-p", "--pretrain", action="store_true", default=False)
     parser.add_argument("-g", "--gpu_ids", type=int, nargs="*", default=None)
+    parser.add_argument("-ckpt", "--checkpoint", type=str, default=None)
     args = parser.parse_args()
     data_root = args.dataset_root
+    is_pretrain = args.pretrain
     gpu_ids = args.gpu_ids
+    checkpoint = args.checkpoint
 
     # load config
     config_path = "configs/model.yaml"
@@ -74,7 +77,7 @@ if __name__ == "__main__":
     )
 
     # create model
-    model = FlowMatching(config)
+    model = FlowMatching(config, is_pretrain=is_pretrain)
     ddp = DDPStrategy(find_unused_parameters=False, process_group_backend="nccl")
 
     logger = TensorBoardLogger("logs/", name="")
@@ -87,4 +90,4 @@ if __name__ == "__main__":
         max_epochs=config.epochs,
         benchmark=True,
     )
-    trainer.fit(model, train_dataloaders=dataloader)
+    trainer.fit(model, train_dataloaders=dataloader, ckpt_path=checkpoint)

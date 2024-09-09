@@ -4,14 +4,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 from torchdyn.core import NeuralODE
-import numpy as np
 
 from .cfm import ConditionalFlowMatcher
 from .nn import UNet
 
 
 class FlowMatching(LightningModule):
-    def __init__(self, config, n_clusters=120, skel_size=(25, 3), mag=1):
+    def __init__(self, config, n_clusters=120, skel_size=(25, 3), is_pretrain=False):
         super().__init__()
         self.config = config
         # self.seq_len = config.seq_len
@@ -19,7 +18,7 @@ class FlowMatching(LightningModule):
         # self.sigma = config.sigma
         self.n_clusters = n_clusters
         self.skel_size = skel_size
-        self.mag = mag
+        self.is_pretrain = is_pretrain
         self.cfm = None
         self.net = None
         self.net_w = None
@@ -29,17 +28,24 @@ class FlowMatching(LightningModule):
             self.cfm = ConditionalFlowMatcher(self.config)
         if self.net is None:
             self.net = UNet(self.config, self.n_clusters, self.skel_size)
+            if self.is_pretrain:
+                self.net.requires_grad_(False)
         if self.net_w is None:
             self.net_w = UNet(self.config, self.n_clusters, self.skel_size)
 
     def configure_optimizers(self):
-        opt = torch.optim.Adam(
-            list(self.net.parameters()) + list(self.net_w.parameters()), self.config.lr
-        )
-        sch = torch.optim.lr_scheduler.CosineAnnealingLR(
-            opt, self.config.t_max, self.config.lr_min
-        )
-        return [opt], [sch]
+        if not self.is_pretrain:
+            opt = torch.optim.Adam(
+                list(self.net.parameters()) + list(self.net_w.parameters()),
+                self.config.lr,
+            )
+            sch = torch.optim.lr_scheduler.CosineAnnealingLR(
+                opt, self.config.t_max, self.config.lr_min
+            )
+            return [opt], [sch]
+        else:
+            opt = torch.optim.Adam(self.net_w.parameters(), self.config.lr)
+            return opt
 
     @staticmethod
     def calc_verocity(x):
@@ -48,18 +54,22 @@ class FlowMatching(LightningModule):
 
     def training_step(self, batch, batch_idx):
         x, seq_lens, labels = batch
-        x = x * self.mag
 
         v = self.calc_verocity(x)
 
         t, vt, ut, dt, v0, v1 = self.cfm.sample_location(v, seq_lens)
 
-        weights = F.relu(self.net_w(t, vt, labels))
+        weights = F.sigmoid(self.net_w(t, vt, labels))
         at = self.net(t, vt, labels) * weights
 
         weights_true = torch.abs(ut)
         weights_true[weights_true < 0.01] = 0.0
+        weights_true[weights_true > 1.0] = 1.0
         loss_w = F.mse_loss(weights, weights_true)
+        if self.is_pretrain:
+            loss_dict = dict(w=loss_w, loss=loss_w)
+            self.log_dict(loss_dict, prog_bar=True, logger=True)
+            return loss_w
 
         loss_a = F.mse_loss(at, ut, reduction="none") * weights_true
         loss_a = loss_a.sum(dim=-1).mean()
@@ -70,25 +80,24 @@ class FlowMatching(LightningModule):
         loss_v1 = loss_v1.sum(dim=-1).mean()
         loss_v = loss_v0 + loss_v1
 
-        b, pt, d = at.size()
-        at = at.view(b * pt, d)
-        ut = ut.view(b * pt, d)
-        weights_cos = torch.norm(ut, dim=-1)
-        weights_cos[weights_cos < 0.01 * np.sqrt(3)] = 0.0
-        weights_cos[weights_cos > 0.01 * np.sqrt(3)] = 1.0
-        target = torch.ones((at.size(0),)).to(self.device)
-        loss_cos = F.cosine_embedding_loss(at, ut, target, reduction="none")
-        loss_cos = (loss_cos * weights_cos).mean()
+        # b, pt, d = at.size()
+        # at = at.view(b * pt, d)
+        # ut = ut.view(b * pt, d)
+        # weights_cos = torch.norm(ut, dim=-1)
+        # weights_cos[weights_cos < 0.01 * np.sqrt(3)] = 0.0
+        # weights_cos[weights_cos > 0.01 * np.sqrt(3)] = 1.0
+        # target = torch.ones((at.size(0),)).to(self.device)
+        # loss_cos = F.cosine_embedding_loss(at, ut, target, reduction="none")
+        # loss_cos = (loss_cos * weights_cos).mean()
 
-        loss = loss_a + loss_v + loss_cos + loss_w  # + loss_cos
-        loss_dict = dict(a=loss_a, v=loss_v, cos=loss_cos, w=loss_w, loss=loss)
+        loss = loss_a + loss_v + loss_w  # + loss_cos
+        loss_dict = dict(a=loss_a, v=loss_v, w=loss_w, loss=loss)
         self.log_dict(loss_dict, prog_bar=True, logger=True)
         return loss
 
     @torch.no_grad()
     def predict_step(self, batch, batch_idx, steps=None):
         x, seq_lens, labels = batch
-        x = x * self.mag
         v = self.calc_verocity(x)
         b, _, pt, d = x.size()
 
@@ -158,7 +167,7 @@ class wrapper(nn.Module):
         self.label = label
 
     def forward(self, t, x, *args, **kwargs):
-        weights = F.relu(self.net_w(t, x, self.label))
+        weights = F.sigmoid(self.net_w(t, x, self.label))
         return self.net(t, x, self.label) * weights
 
 

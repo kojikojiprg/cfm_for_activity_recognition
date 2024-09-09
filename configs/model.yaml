@@ -7,7 +7,7 @@ ma_w: 5
 # model
 # hidden_ndim: 128
 hidden_nch: 512
-lmd_pe: 0.5
+lmd_pe: 0.1
 lmd_y: 1
 # nlayers: 1
 # nheads: 8
