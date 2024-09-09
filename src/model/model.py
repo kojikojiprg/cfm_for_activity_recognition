@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from lightning.pytorch import LightningModule
 from torchdyn.core import NeuralODE
+import numpy as np
 
 from .cfm import ConditionalFlowMatcher
 from .nn import UNet
@@ -53,31 +54,34 @@ class FlowMatching(LightningModule):
 
         t, vt, ut, dt, v0, v1 = self.cfm.sample_location(v, seq_lens)
 
-        weigt_logits = self.net_w(t, vt, labels)
-        weights = F.sigmoid(weigt_logits)
-        at = self.net(t, vt, labels)
+        weights = F.relu(self.net_w(t, vt, labels))
+        at = self.net(t, vt, labels) * weights
 
-        weights_true = torch.ones_like(weights)
-        weights_true[torch.abs(ut.detach()) < 0.01] = 0.0
-        loss_w = F.binary_cross_entropy_with_logits(weigt_logits, weights_true)
+        weights_true = torch.abs(ut)
+        weights_true[weights_true < 0.01] = 0.0
+        loss_w = F.mse_loss(weights, weights_true)
 
-        loss_a = F.mse_loss(at, ut, reduction="none") * weights
+        loss_a = F.mse_loss(at, ut, reduction="none") * weights_true
         loss_a = loss_a.sum(dim=-1).mean()
 
-        loss_v0 = F.mse_loss(vt - at * dt, v0, reduction="none") * weights
+        loss_v0 = F.mse_loss(vt - at * dt, v0, reduction="none") * weights_true
         loss_v0 = loss_v0.sum(dim=-1).mean()
-        loss_v1 = F.mse_loss(vt + at * (1 - dt), v1, reduction="none") * weights
+        loss_v1 = F.mse_loss(vt + at * (1 - dt), v1, reduction="none") * weights_true
         loss_v1 = loss_v1.sum(dim=-1).mean()
         loss_v = loss_v0 + loss_v1
 
-        # b, pt, d = at.size()
-        # at = at.view(b * pt, d)
-        # ut = ut.view(b * pt, d)
-        # target = torch.ones((at.size(0),)).to(self.device)
-        # loss_cos = F.cosine_embedding_loss(at, ut, target)
+        b, pt, d = at.size()
+        at = at.view(b * pt, d)
+        ut = ut.view(b * pt, d)
+        weights_cos = torch.norm(ut, dim=-1)
+        weights_cos[weights_cos < 0.01 * np.sqrt(3)] = 0.0
+        weights_cos[weights_cos > 0.01 * np.sqrt(3)] = 1.0
+        target = torch.ones((at.size(0),)).to(self.device)
+        loss_cos = F.cosine_embedding_loss(at, ut, target, reduction="none")
+        loss_cos = (loss_cos * weights_cos).mean()
 
-        loss = loss_a + loss_v + loss_w  # + loss_cos
-        loss_dict = dict(a=loss_a, v=loss_v, w=loss_w, loss=loss)
+        loss = loss_a + loss_v + loss_cos + loss_w  # + loss_cos
+        loss_dict = dict(a=loss_a, v=loss_v, cos=loss_cos, w=loss_w, loss=loss)
         self.log_dict(loss_dict, prog_bar=True, logger=True)
         return loss
 
@@ -93,7 +97,7 @@ class FlowMatching(LightningModule):
         results = []
         for i in range(b):
             n_ode = NeuralODE(
-                wrapper(self.net, labels[i]),
+                wrapper(self.net, self.net_w, labels[i]),
                 "dopri5",
                 atol=1e-8,
                 rtol=1e-8,
@@ -154,7 +158,7 @@ class wrapper(nn.Module):
         self.label = label
 
     def forward(self, t, x, *args, **kwargs):
-        weights = F.sigmoid(self.net_w(t, x, self.label))
+        weights = F.relu(self.net_w(t, x, self.label))
         return self.net(t, x, self.label) * weights
 
 
@@ -184,6 +188,8 @@ def plot_traj(vit, vi, t):
     plt.scatter(vit_plot[:, :, 0], vit_plot[:, :, 1], s=1, c="olive")
     plt.scatter(vit_plot[-1, :, 0], vit_plot[-1, :, 1], s=2, c="blue")
 
+    plt.xlabel("v_x")
+    plt.ylabel("v_y")
     # plt.xlim(-0.01, 0.01)
     # plt.ylim(-0.01, 0.01)
     plt.show()

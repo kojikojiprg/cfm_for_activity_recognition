@@ -32,8 +32,8 @@ class ConditionalFlowMatcher:
         v1 = []
         for i in range(len(seq_lens)):
             ti = torch.randint(seq_lens[i] - 2, (1,))
-            # dti = torch.randint(self.steps, (1,)) / self.steps
-            dti = torch.randint(2, (1,)) * self.sigma
+            dti = torch.randint(self.steps, (1,)) / self.steps
+            # dti = torch.randint(2, (1,)) * self.sigma
             t.append(ti + dti)
             dt.append(dti)
             v0.append(v[i, ti].view(1, pt, d))
