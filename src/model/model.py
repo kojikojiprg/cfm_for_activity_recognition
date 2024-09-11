@@ -34,18 +34,18 @@ class FlowMatching(LightningModule):
             self.net_w = UNet(self.config, self.n_clusters, self.skel_size)
 
     def configure_optimizers(self):
-        if not self.is_pretrain:
-            opt = torch.optim.Adam(
-                list(self.net.parameters()) + list(self.net_w.parameters()),
-                self.config.lr,
-            )
+        self.config.lr = self.config.lr * 10 if self.is_pretrain else self.config.lr
+        opt = torch.optim.Adam(
+            list(self.net.parameters()) + list(self.net_w.parameters()),
+            self.config.lr,
+        )
+        if self.is_pretrain:
+            return opt
+        else:
             sch = torch.optim.lr_scheduler.CosineAnnealingLR(
                 opt, self.config.t_max, self.config.lr_min
             )
             return [opt], [sch]
-        else:
-            opt = torch.optim.Adam(self.net_w.parameters(), self.config.lr)
-            return opt
 
     @staticmethod
     def calc_verocity(x):
@@ -63,7 +63,7 @@ class FlowMatching(LightningModule):
         at = self.net(t, vt, labels) * weights
 
         weights_true = torch.abs(ut)
-        weights_true[weights_true < 0.01] = 0.0
+        weights_true[weights_true < 0.02] = 0.0
         weights_true[weights_true > 1.0] = 1.0
         loss_w = F.mse_loss(weights, weights_true)
         if self.is_pretrain:
@@ -80,18 +80,18 @@ class FlowMatching(LightningModule):
         loss_v1 = loss_v1.sum(dim=-1).mean()
         loss_v = loss_v0 + loss_v1
 
-        # b, pt, d = at.size()
-        # at = at.view(b * pt, d)
-        # ut = ut.view(b * pt, d)
-        # weights_cos = torch.norm(ut, dim=-1)
-        # weights_cos[weights_cos < 0.01 * np.sqrt(3)] = 0.0
-        # weights_cos[weights_cos > 0.01 * np.sqrt(3)] = 1.0
-        # target = torch.ones((at.size(0),)).to(self.device)
-        # loss_cos = F.cosine_embedding_loss(at, ut, target, reduction="none")
-        # loss_cos = (loss_cos * weights_cos).mean()
+        b, pt, d = at.size()
+        at = at.view(b * pt, d)
+        ut = ut.view(b * pt, d)
+        weights_cos = torch.norm(ut, dim=-1)
+        weights_cos[weights_cos < 0.04] = 0.0  # 1.73 ~ sqrt(3)
+        weights_cos[weights_cos >= 0.04] = 1.0
+        target = torch.ones((at.size(0),)).to(self.device)
+        loss_cos = F.cosine_embedding_loss(at, ut, target, reduction="none")
+        loss_cos = (loss_cos * weights_cos).mean()
 
-        loss = loss_a + loss_v + loss_w  # + loss_cos
-        loss_dict = dict(a=loss_a, v=loss_v, w=loss_w, loss=loss)
+        loss = (loss_a + loss_v) + loss_cos + loss_w
+        loss_dict = dict(a=loss_a, v=loss_v, cos=loss_cos, w=loss_w, loss=loss)
         self.log_dict(loss_dict, prog_bar=True, logger=True)
         return loss
 
