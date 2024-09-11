@@ -26,6 +26,8 @@ if __name__ == "__main__":
     is_pretrain = args.pretrain
     gpu_ids = args.gpu_ids
     checkpoint = args.checkpoint
+    if checkpoint is not None:
+        assert os.path.exists(checkpoint)
 
     # load config
     config_path = "configs/model.yaml"
@@ -81,13 +83,14 @@ if __name__ == "__main__":
     ddp = DDPStrategy(find_unused_parameters=False, process_group_backend="nccl")
 
     logger = TensorBoardLogger("logs/", name="")
+    epochs = config.pre_epochs if is_pretrain else config.epochs
     trainer = Trainer(
         accelerator="cuda",
         strategy=ddp,
         devices=gpu_ids,
         logger=logger,
         callbacks=[model_checkpoint],
-        max_epochs=config.epochs,
+        max_epochs=epochs,
         benchmark=True,
     )
     trainer.fit(model, train_dataloaders=dataloader, ckpt_path=checkpoint)
